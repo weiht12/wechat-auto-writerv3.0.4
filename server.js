@@ -10,6 +10,17 @@ const path       = require('path');
 const fs         = require('fs');
 const yaml       = require('js-yaml');
 
+// ─── Vercel 适配：将 data/output 指向 /tmp（可写目录） ──────
+if (process.env.VERCEL) {
+  const tmpData = '/tmp/data';
+  const tmpOutput = '/tmp/output';
+  if (!fs.existsSync(tmpData)) fs.mkdirSync(tmpData, { recursive: true });
+  if (!fs.existsSync(tmpOutput)) fs.mkdirSync(tmpOutput, { recursive: true });
+  // 让 require 缓存失效后重新加载的模块也能看到正确的路径
+  process.env.__VERCEL_DATA_DIR = tmpData;
+  process.env.__VERCEL_OUTPUT_DIR = tmpOutput;
+}
+
 const NewsScraper      = require('./src/scraper');
 const AIRewriter       = require('./src/rewriter');
 const MarkdownFormatter = require('./src/formatter');
@@ -166,7 +177,19 @@ function sseError(res, msg) {
 // ═══════════════════════════════════════════════════════════════
 app.get('/api/status', (req, res) => {
   try {
-    const config        = loadConfig();
+    const config = loadConfig();
+
+    // Vercel 环境降级：直接返回空数据（无本地文件系统）
+    if (process.env.VERCEL) {
+      return res.json({
+        profile: null,
+        articles: null,
+        output: [],
+        hotCache: null,
+        platform: 'vercel',
+      });
+    }
+
     const styleAnalyzer = new StyleAnalyzer(config);
     const historySync   = new HistorySync(config);
     const profile       = styleAnalyzer.loadProfile();
