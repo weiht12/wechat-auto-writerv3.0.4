@@ -1,0 +1,1379 @@
+// ============================================================
+// 公众号写作助手 v2.0 - 前端逻辑
+// 重写版本：格式化多行，便于维护
+// ============================================================
+
+// ─── 全局状态 ────────────────────────────────────────────────
+var currentPage = 'dashboard';
+var selectedNewsItems = [];
+var hotTopics = [];
+var globalHotResults = [];
+var refArticles = [];
+var selectedRefIds = [];
+var imitateEventSource = null;
+var writeEventSource = null;
+var hotEventSource = null;
+
+// ─── 页面导航 ────────────────────────────────────────────────
+function navigate(page) {
+  // 隐藏所有页面
+  var pages = document.querySelectorAll('.page');
+  for (var i = 0; i < pages.length; i++) {
+    pages[i].classList.remove('active');
+  }
+  // 显示目标页面
+  var target = document.getElementById('page-' + page);
+  if (target) {
+    target.classList.add('active');
+  }
+  // 更新导航高亮
+  var navItems = document.querySelectorAll('.nav-item');
+  for (var j = 0; j < navItems.length; j++) {
+    if (navItems[j].getAttribute('data-page') === page) {
+      navItems[j].classList.add('active');
+    } else {
+      navItems[j].classList.remove('active');
+    }
+  }
+  currentPage = page;
+  // 懒加载各页面数据
+  if (page === 'profile') loadProfile();
+  if (page === 'history') loadHistory();
+  if (page === 'imitate') loadRefArticles();
+}
+
+// ─── Toast 通知 ──────────────────────────────────────────────
+function showToast(msg, type) {
+  var toast = document.getElementById('toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'toast';
+    toast.style.cssText = 'position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:8px;color:#fff;font-size:14px;z-index:9999;transition:opacity .3s;opacity:0;';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.style.background = (type === 'error') ? '#e53935' : (type === 'warning' ? '#fb8c00' : '#2e7d32');
+  toast.style.opacity = '1';
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(function() { toast.style.opacity = '0'; }, 3000);
+}
+
+function initToast() {
+  // Toast 容器初始化（懒创建）
+}
+
+// ─── AI 状态检测 ─────────────────────────────────────────────
+function checkAIStatus() {
+  var dot = document.getElementById('ai-status-dot');
+  var text = document.getElementById('ai-status-text');
+  fetch('/api/status')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (dot) dot.style.background = '#4caf50';
+      if (text) text.textContent = 'AI 已就绪';
+      renderDashboard(data);
+    })
+    .catch(function() {
+      if (dot) dot.style.background = '#e53935';
+      if (text) text.textContent = 'AI 离线';
+    });
+}
+
+// ─── 仪表盘 ──────────────────────────────────────────────────
+function renderDashboard(data) {
+  // 风格档案
+  var statProfile = document.getElementById('stat-profile');
+  var statProfileMeta = document.getElementById('stat-profile-meta');
+  if (data.profile && statProfile) {
+    statProfile.textContent = data.profile.summary ? '已建立' : '未建立';
+    if (statProfileMeta) {
+      var sampleCount = data.profile.sample_count || 0;
+      statProfileMeta.textContent = sampleCount + ' 篇样本';
+    }
+  } else if (statProfile) {
+    statProfile.textContent = '未建立';
+  }
+
+  // 历史文章
+  var statArticles = document.getElementById('stat-articles');
+  var statArticlesMeta = document.getElementById('stat-articles-meta');
+  if (data.articles && statArticles) {
+    statArticles.textContent = data.articles.total + ' 篇';
+    if (statArticlesMeta && data.articles.synced_at) {
+      statArticlesMeta.textContent = '上次同步 ' + formatDate(data.articles.synced_at);
+    }
+  } else if (statArticles) {
+    statArticles.textContent = '0 篇';
+  }
+
+  // 已生成文章
+  var statOutput = document.getElementById('stat-output');
+  var statOutputMeta = document.getElementById('stat-output-meta');
+  if (data.output && statOutput) {
+    statOutput.textContent = data.output.length + ' 篇';
+    if (statOutputMeta && data.output.length > 0) {
+      statOutputMeta.textContent = '最近：' + data.output[0].title.substring(0, 15) + '...';
+    }
+  } else if (statOutput) {
+    statOutput.textContent = '0 篇';
+  }
+
+  // 热点缓存
+  var statHot = document.getElementById('stat-hot');
+  var statHotMeta = document.getElementById('stat-hot-meta');
+  if (data.hotCache && statHot) {
+    statHot.textContent = data.hotCache.count + ' 条';
+    if (statHotMeta && data.hotCache.generated_at) {
+      statHotMeta.textContent = '更新于 ' + formatDate(data.hotCache.generated_at);
+    }
+  } else if (statHot) {
+    statHot.textContent = '暂无缓存';
+  }
+
+  // 最近文章列表
+  var recentEl = document.getElementById('recent-articles');
+  if (recentEl && data.output && data.output.length > 0) {
+    var html = '';
+    var items = data.output.slice(0, 5);
+    for (var i = 0; i < items.length; i++) {
+      var art = items[i];
+      html += '<div class="article-item">';
+      html += '<div class="article-title">' + escHtml(art.title) + '</div>';
+      html += '<div class="article-meta">' + formatDate(art.mtime) + '</div>';
+      html += '</div>';
+    }
+    recentEl.innerHTML = html;
+  } else if (recentEl) {
+    recentEl.innerHTML = '<div class="empty-state">暂无生成记录</div>';
+  }
+}
+
+// ─── 每日热点 ────────────────────────────────────────────────
+var currentHotTab = 'local';
+var currentHotMode = 'today';
+
+function switchHotTab(tab) {
+  currentHotTab = tab;
+  var localBtn = document.getElementById('hot-tab-local');
+  var globalBtn = document.getElementById('hot-tab-global');
+  var localContent = document.getElementById('hot-content-local');
+  var globalContent = document.getElementById('hot-content-global');
+  if (tab === 'local') {
+    if (localBtn) localBtn.classList.add('active');
+    if (globalBtn) globalBtn.classList.remove('active');
+    if (localContent) localContent.style.display = '';
+    if (globalContent) globalContent.style.display = 'none';
+  } else {
+    if (localBtn) localBtn.classList.remove('active');
+    if (globalBtn) globalBtn.classList.add('active');
+    if (localContent) localContent.style.display = 'none';
+    if (globalContent) globalContent.style.display = '';
+  }
+}
+
+function switchHotMode(mode) {
+  currentHotMode = mode;
+  var todayBtn = document.getElementById('hot-mode-today');
+  var searchBtn = document.getElementById('hot-mode-search');
+  var todayContent = document.getElementById('hot-mode-content-today');
+  var searchContent = document.getElementById('hot-mode-content-search');
+  if (mode === 'today') {
+    if (todayBtn) todayBtn.classList.add('active');
+    if (searchBtn) searchBtn.classList.remove('active');
+    if (todayContent) todayContent.style.display = '';
+    if (searchContent) searchContent.style.display = 'none';
+  } else {
+    if (todayBtn) todayBtn.classList.remove('active');
+    if (searchBtn) searchBtn.classList.add('active');
+    if (todayContent) todayContent.style.display = 'none';
+    if (searchContent) searchContent.style.display = '';
+  }
+}
+
+function loadHotTopics(forceRefresh) {
+  var listEl = document.getElementById('hot-topics-list');
+  var progressEl = document.getElementById('hot-progress');
+  var progressMsg = document.getElementById('hot-progress-msg');
+  var btnRefresh = document.getElementById('btn-refresh');
+  var dateDesc = document.getElementById('hot-date-desc');
+
+  if (listEl) listEl.innerHTML = '<div class="loading-state">正在抓取热点...</div>';
+  if (progressEl) progressEl.style.display = '';
+  if (btnRefresh) btnRefresh.disabled = true;
+
+  if (hotEventSource) { hotEventSource.close(); hotEventSource = null; }
+
+  var url = '/api/hot-topics' + (forceRefresh ? '?refresh=1' : '');
+  hotEventSource = new EventSource(url);
+  hotTopics = [];
+
+  hotEventSource.onmessage = function(e) {
+    var d = JSON.parse(e.data);
+
+    if (d.type === 'cached') {
+      if (dateDesc) dateDesc.textContent = '今日热点（缓存自 ' + formatDate(d.generated_at) + '）';
+      updateSourceStats(d.site_stats, 'today');
+    }
+
+    if (d.type === 'progress') {
+      if (progressMsg) progressMsg.textContent = d.msg || '';
+    }
+
+    if (d.type === 'source_done') {
+      updateSourceStats(d.site_stats, 'today');
+    }
+
+    if (d.type === 'topics' || d.__done) {
+      if (d.topics) hotTopics = d.topics;
+      if (d.site_stats) updateSourceStats(d.site_stats, 'today');
+      renderHotTopics(hotTopics);
+      if (progressEl) progressEl.style.display = 'none';
+      if (btnRefresh) btnRefresh.disabled = false;
+      if (dateDesc && hotTopics.length > 0) {
+        dateDesc.textContent = '今日热点 · 共 ' + hotTopics.length + ' 条';
+      }
+      // 更新 badge
+      var badge = document.getElementById('badge-hot');
+      if (badge) badge.textContent = hotTopics.length > 0 ? hotTopics.length : '';
+      if (hotEventSource) { hotEventSource.close(); hotEventSource = null; }
+    }
+  };
+
+  hotEventSource.onerror = function() {
+    if (listEl) listEl.innerHTML = '<div class="error-state">抓取失败，请检查网络</div>';
+    if (progressEl) progressEl.style.display = 'none';
+    if (btnRefresh) btnRefresh.disabled = false;
+    if (hotEventSource) { hotEventSource.close(); hotEventSource = null; }
+  };
+}
+
+function updateSourceStats(stats, prefix) {
+  if (!stats) return;
+  var mapping = {
+    '大河财立方': 'src-dahecube',
+    '河南省政府': 'src-gov',
+    '百度新闻': 'src-baidu'
+  };
+  for (var src in stats) {
+    var elId = (prefix === 'search') ? 'src-search-' + src.toLowerCase() : mapping[src];
+    if (!elId) continue;
+    var el = document.getElementById(elId);
+    if (el) {
+      var countEl = el.querySelector('.source-count');
+      var dotEl = el.querySelector('.source-dot');
+      if (countEl) countEl.textContent = stats[src] + ' 条';
+      if (dotEl) dotEl.style.background = stats[src] > 0 ? '#4caf50' : '#e0e0e0';
+    }
+  }
+}
+
+function renderHotTopics(topics) {
+  var listEl = document.getElementById('hot-topics-list');
+  if (!listEl) return;
+  if (!topics || topics.length === 0) {
+    listEl.innerHTML = '<div class="empty-state">暂无热点数据</div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < topics.length; i++) {
+    var t = topics[i];
+    var rank = i < 5 ? (i + 1) : 0;
+    var rankClass = rank ? 'rank-' + rank : 'rank-other';
+    html += '<div class="topic-item">';
+    html += '<span class="topic-rank ' + rankClass + '">' + (i + 1) + '</span>';
+    html += '<div class="topic-body">';
+    html += '<a class="topic-title" href="' + escHtml(t.url || '#') + '" target="_blank" rel="noopener">' + escHtml(t.title) + '</a>';
+    if (t.source) html += '<span class="topic-source">' + escHtml(t.source) + '</span>';
+    html += '</div>';
+    html += '<button class="btn btn-ghost btn-sm topic-use-btn" onclick="useTopicForWrite(\'' + escAttr(t.title) + '\')" title="用这条热点生成文章">用此生成</button>';
+    html += '</div>';
+  }
+  listEl.innerHTML = html;
+}
+
+function useTopicForWrite(title) {
+  navigate('write');
+  var kwInput = document.getElementById('kw-input');
+  if (kwInput) kwInput.value = title;
+}
+
+// 关键词搜索热点
+function searchLocalHotTopics() {
+  var kwInput = document.getElementById('local-hot-keyword');
+  var keyword = kwInput ? kwInput.value.trim() : '';
+  if (!keyword) { showToast('请输入搜索关键词', 'warning'); return; }
+
+  var listEl = document.getElementById('hot-topics-list');
+  var progressEl = document.getElementById('local-search-progress');
+  var progressMsg = document.getElementById('local-search-msg');
+  var sourceBar = document.getElementById('search-source-bar');
+  var btnSearch = document.getElementById('btn-local-search');
+
+  if (listEl) listEl.innerHTML = '<div class="loading-state">搜索中...</div>';
+  if (progressEl) progressEl.style.display = '';
+  if (sourceBar) sourceBar.style.display = '';
+  if (btnSearch) btnSearch.disabled = true;
+
+  var url = '/api/search-news?keyword=' + encodeURIComponent(keyword);
+  var es = new EventSource(url);
+
+  es.onmessage = function(e) {
+    var d = JSON.parse(e.data);
+    if (d.type === 'progress' && progressMsg) progressMsg.textContent = d.msg || '';
+    if (d.type === 'source_done') updateSearchSourceStats(d);
+    if (d.__done) {
+      if (d.results) renderHotTopics(d.results);
+      if (progressEl) progressEl.style.display = 'none';
+      if (btnSearch) btnSearch.disabled = false;
+      es.close();
+    }
+  };
+  es.onerror = function() {
+    if (progressEl) progressEl.style.display = 'none';
+    if (btnSearch) btnSearch.disabled = false;
+    if (listEl) listEl.innerHTML = '<div class="error-state">搜索失败</div>';
+    es.close();
+  };
+}
+
+function updateSearchSourceStats(d) {
+  var srcMap = { baidu: 'src-search-baidu', bing: 'src-search-bing', google: 'src-search-google' };
+  for (var k in srcMap) {
+    if (d[k + '_count'] !== undefined) {
+      var el = document.getElementById(srcMap[k]);
+      if (el) {
+        var cnt = el.querySelector('.source-count');
+        var dot = el.querySelector('.source-dot');
+        if (cnt) cnt.textContent = d[k + '_count'] + ' 条';
+        if (dot) dot.style.background = d[k + '_count'] > 0 ? '#4caf50' : '#e0e0e0';
+      }
+    }
+  }
+}
+
+// 全网热点（Tavily）
+function loadGlobalHot() {
+  var queryInput = document.getElementById('global-hot-query');
+  var query = queryInput ? queryInput.value.trim() : '';
+  var listEl = document.getElementById('global-hot-list');
+  var progressEl = document.getElementById('global-hot-progress');
+  var progressMsg = document.getElementById('global-hot-msg');
+  var sourceBar = document.getElementById('global-source-bar');
+  var btnSearch = document.getElementById('btn-global-search');
+
+  if (listEl) listEl.innerHTML = '<div class="loading-state">搜索全网热点...</div>';
+  if (progressEl) progressEl.style.display = '';
+  if (sourceBar) sourceBar.style.display = 'none';
+  if (btnSearch) btnSearch.disabled = true;
+
+  var url = '/api/global-hot' + (query ? '?query=' + encodeURIComponent(query) : '');
+  var es = new EventSource(url);
+
+  es.onmessage = function(e) {
+    var d = JSON.parse(e.data);
+    if (d.type === 'progress' && progressMsg) progressMsg.textContent = d.msg || '';
+    if (d.__done) {
+      var results = d.results || d.topics || [];
+      globalHotResults = results;
+      renderGlobalHotList(results);
+      if (progressEl) progressEl.style.display = 'none';
+      if (sourceBar) {
+        sourceBar.style.display = '';
+        var cnt = sourceBar.querySelector('.source-count');
+        var dot = sourceBar.querySelector('.source-dot');
+        if (cnt) cnt.textContent = results.length + ' 条';
+        if (dot) dot.style.background = results.length > 0 ? '#4caf50' : '#e0e0e0';
+      }
+      if (btnSearch) btnSearch.disabled = false;
+      es.close();
+    }
+  };
+  es.onerror = function() {
+    if (progressEl) progressEl.style.display = 'none';
+    if (btnSearch) btnSearch.disabled = false;
+    if (listEl) listEl.innerHTML = '<div class="error-state">全网搜索失败，请检查 Tavily API Key</div>';
+    es.close();
+  };
+}
+
+function renderGlobalHotList(results) {
+  var listEl = document.getElementById('global-hot-list');
+  if (!listEl) return;
+  if (!results || results.length === 0) {
+    listEl.innerHTML = '<div class="empty-state">暂无结果</div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < results.length; i++) {
+    var t = results[i];
+    html += '<div class="topic-item">';
+    html += '<span class="topic-rank rank-' + Math.min(i + 1, 5) + '">' + (i + 1) + '</span>';
+    html += '<div class="topic-body">';
+    html += '<a class="topic-title" href="' + escHtml(t.url || '#') + '" target="_blank" rel="noopener">' + escHtml(t.title) + '</a>';
+    if (t.content) html += '<p class="topic-snippet">' + escHtml(t.content.substring(0, 100)) + '...</p>';
+    html += '</div>';
+    html += '<button class="btn btn-ghost btn-sm topic-use-btn" onclick="useTopicForWrite(\'' + escAttr(t.title) + '\')" title="用此生成文章">用此生成</button>';
+    html += '</div>';
+  }
+  listEl.innerHTML = html;
+}
+
+// ─── 生成文章 ────────────────────────────────────────────────
+function switchWriteMode(mode) {
+  var defaultOpt = document.getElementById('mode-default');
+  var customOpt = document.getElementById('mode-custom');
+  var customForm = document.getElementById('custom-direction-form');
+  var styleInfo = document.getElementById('style-info-bar');
+  if (mode === 'default') {
+    if (defaultOpt) defaultOpt.classList.add('active');
+    if (customOpt) customOpt.classList.remove('active');
+    if (customForm) customForm.style.display = 'none';
+    if (styleInfo) styleInfo.style.display = '';
+  } else {
+    if (defaultOpt) defaultOpt.classList.remove('active');
+    if (customOpt) customOpt.classList.add('active');
+    if (customForm) customForm.style.display = '';
+    if (styleInfo) styleInfo.style.display = 'none';
+  }
+}
+
+function fetchNews() {
+  var kw = document.getElementById('kw-input');
+  var keyword = kw ? kw.value.trim() : '';
+  if (!keyword) { showToast('请输入搜索关键词', 'warning'); return; }
+
+  var countSel = document.getElementById('count-select');
+  var count = countSel ? parseInt(countSel.value) : 5;
+  var tavilyEnabled = document.getElementById('tavily-enabled');
+  var useTavily = tavilyEnabled ? tavilyEnabled.checked : false;
+
+  var newsListEl = document.getElementById('news-list');
+  var btnFetch = document.getElementById('btn-fetch');
+  var step2 = document.getElementById('write-step2');
+
+  if (newsListEl) { newsListEl.style.display = ''; newsListEl.innerHTML = '<div class="loading-state">搜索新闻中...</div>'; }
+  if (btnFetch) btnFetch.disabled = true;
+
+  var url = '/api/fetch-news?keyword=' + encodeURIComponent(keyword) + '&count=' + count + (useTavily ? '&tavily=1' : '');
+  var es = new EventSource(url);
+  var newsItems = [];
+
+  es.onmessage = function(e) {
+    var d = JSON.parse(e.data);
+    if (d.type === 'progress' && newsListEl) {
+      newsListEl.innerHTML = '<div class="loading-state">' + escHtml(d.msg || '搜索中...') + '</div>';
+    }
+    if (d.__done) {
+      newsItems = d.items || d.results || [];
+      renderNewsList(newsItems);
+      if (btnFetch) btnFetch.disabled = false;
+      if (step2 && newsItems.length > 0) step2.style.display = '';
+      es.close();
+    }
+  };
+  es.onerror = function() {
+    if (newsListEl) newsListEl.innerHTML = '<div class="error-state">抓取失败，请重试</div>';
+    if (btnFetch) btnFetch.disabled = false;
+    es.close();
+  };
+}
+
+function renderNewsList(items) {
+  var newsListEl = document.getElementById('news-list');
+  if (!newsListEl) return;
+  if (!items || items.length === 0) {
+    newsListEl.innerHTML = '<div class="empty-state">未找到相关新闻</div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    html += '<div class="news-item" id="news-item-' + i + '">';
+    html += '<label class="news-check">';
+    html += '<input type="checkbox" class="news-checkbox" value="' + i + '" onchange="updateSelectedNews()" checked />';
+    html += '<div class="news-item-body">';
+    html += '<div class="news-item-title">' + escHtml(it.title) + '</div>';
+    if (it.source || it.url) {
+      html += '<div class="news-item-meta">';
+      if (it.source) html += '<span class="news-source">' + escHtml(it.source) + '</span>';
+      if (it.url) html += '<a class="news-link" href="' + escHtml(it.url) + '" target="_blank" rel="noopener">查看原文</a>';
+      html += '</div>';
+    }
+    html += '</div>';
+    html += '</label>';
+    html += '</div>';
+  }
+  newsListEl.innerHTML = html;
+  selectedNewsItems = items.slice();
+  updateSelectedNewsBadge();
+}
+
+function updateSelectedNews() {
+  var checkboxes = document.querySelectorAll('.news-checkbox');
+  var newsItems_all = [];
+  // 重新从渲染的列表收集
+  var listEl = document.getElementById('news-list');
+  if (!listEl) return;
+  var newsItemEls = listEl.querySelectorAll('.news-item');
+  selectedNewsItems = [];
+  for (var i = 0; i < checkboxes.length; i++) {
+    if (checkboxes[i].checked) {
+      var idx = parseInt(checkboxes[i].value);
+      // 从全局 newsItems 数组取（renderNewsList 存在 window.allNewsItems）
+      if (window.allNewsItems && window.allNewsItems[idx]) {
+        selectedNewsItems.push(window.allNewsItems[idx]);
+      }
+    }
+  }
+  updateSelectedNewsBadge();
+}
+
+function updateSelectedNewsBadge() {
+  var badge = document.getElementById('selected-count-badge');
+  var checkboxes = document.querySelectorAll('.news-checkbox:checked');
+  if (badge) badge.textContent = '已选 ' + checkboxes.length + ' 篇';
+}
+
+function writeArticle() {
+  // 收集选中的新闻
+  var checkboxes = document.querySelectorAll('.news-checkbox:checked');
+  if (checkboxes.length === 0) { showToast('请至少选择一篇新闻', 'warning'); return; }
+
+  var writeMode = document.querySelector('input[name="write-mode"]:checked');
+  var mode = writeMode ? writeMode.value : 'default';
+  var direction = '';
+  var outline = '';
+  var deepResearch = false;
+  var useStyleProfile = true;
+
+  if (mode === 'custom') {
+    var dirInput = document.getElementById('custom-direction');
+    direction = dirInput ? dirInput.value.trim() : '';
+    var outInput = document.getElementById('custom-outline');
+    outline = outInput ? outInput.value.trim() : '';
+    var deepEl = document.getElementById('deep-research-enabled');
+    deepResearch = deepEl ? deepEl.checked : false;
+    var styleEl = document.getElementById('style-profile-enabled');
+    useStyleProfile = styleEl ? styleEl.checked : true;
+  }
+
+  // 收集新闻索引
+  var indices = [];
+  for (var i = 0; i < checkboxes.length; i++) {
+    indices.push(parseInt(checkboxes[i].value));
+  }
+
+  var progressArea = document.getElementById('write-progress-area');
+  var btnWrite = document.getElementById('btn-write');
+  var resultPanel = document.getElementById('write-result');
+
+  if (progressArea) progressArea.style.display = '';
+  if (btnWrite) btnWrite.disabled = true;
+  if (resultPanel) resultPanel.style.display = 'none';
+
+  setWriteStep(1, 'active');
+
+  var kw = document.getElementById('kw-input');
+  var keyword = kw ? kw.value.trim() : '';
+
+  var params = new URLSearchParams({
+    keyword: keyword,
+    indices: indices.join(','),
+    mode: mode,
+    direction: direction,
+    outline: outline,
+    deepResearch: deepResearch ? '1' : '0',
+    useStyleProfile: useStyleProfile ? '1' : '0'
+  });
+
+  if (writeEventSource) { writeEventSource.close(); writeEventSource = null; }
+  writeEventSource = new EventSource('/api/write?' + params.toString());
+
+  writeEventSource.onmessage = function(e) {
+    var d = JSON.parse(e.data);
+    var msg = document.getElementById('write-progress-msg');
+    if (msg && d.msg) msg.textContent = d.msg;
+
+    if (d.step) setWriteStep(d.step, 'active');
+
+    if (d.__done) {
+      setWriteStep(4, 'done');
+      if (progressArea) progressArea.style.display = 'none';
+      if (btnWrite) btnWrite.disabled = false;
+      if (d.error) {
+        showToast('生成失败：' + d.error, 'error');
+      } else {
+        renderWriteResult(d);
+      }
+      if (writeEventSource) { writeEventSource.close(); writeEventSource = null; }
+    }
+  };
+
+  writeEventSource.onerror = function() {
+    if (progressArea) progressArea.style.display = 'none';
+    if (btnWrite) btnWrite.disabled = false;
+    showToast('生成文章失败，请重试', 'error');
+    if (writeEventSource) { writeEventSource.close(); writeEventSource = null; }
+  };
+}
+
+function setWriteStep(step, status) {
+  for (var i = 1; i <= 4; i++) {
+    var el = document.getElementById('wstep-' + i);
+    if (!el) continue;
+    var icon = el.querySelector('.wstep-icon');
+    if (i < step) {
+      el.classList.add('done');
+      if (icon) icon.textContent = '✓';
+    } else if (i === step) {
+      el.classList.add('active');
+      if (icon) icon.textContent = '⚡';
+    }
+  }
+}
+
+function renderWriteResult(data) {
+  var resultPanel = document.getElementById('write-result');
+  var resultTitle = document.getElementById('result-title-header');
+  var resultContent = document.getElementById('result-content');
+  var resultWordcount = document.getElementById('result-wordcount');
+  var resultTags = document.getElementById('result-tags');
+  var resultWxStatus = document.getElementById('result-wx-status');
+  var resultSummary = document.getElementById('result-summary');
+
+  if (!resultPanel) return;
+
+  if (resultTitle) resultTitle.textContent = data.title || '文章已生成';
+  if (resultContent && data.content) {
+    resultContent.innerHTML = (typeof marked !== 'undefined') ? marked.parse(data.content) : escHtml(data.content).replace(/\n/g, '<br>');
+  }
+  if (resultWordcount) {
+    var wc = data.content ? data.content.replace(/\s/g, '').length : 0;
+    resultWordcount.textContent = wc + ' 字';
+  }
+  if (resultTags && data.tags) {
+    var tagsHtml = '';
+    for (var i = 0; i < data.tags.length; i++) {
+      tagsHtml += '<span class="tag-chip">' + escHtml(data.tags[i]) + '</span>';
+    }
+    resultTags.innerHTML = tagsHtml;
+  }
+  if (resultWxStatus) {
+    resultWxStatus.textContent = data.wx_media_id ? '已推送草稿箱' : '';
+  }
+  if (resultSummary && data.summary) {
+    resultSummary.textContent = data.summary;
+    resultSummary.style.display = '';
+  }
+
+  resultPanel.style.display = '';
+  resultPanel.scrollIntoView({ behavior: 'smooth' });
+  window._lastArticleContent = data.content || '';
+  window._lastArticleTitle = data.title || '';
+}
+
+function copyArticle() {
+  var content = window._lastArticleContent || '';
+  if (!content) { showToast('没有可复制的内容', 'warning'); return; }
+  navigator.clipboard.writeText(content)
+    .then(function() { showToast('已复制到剪贴板', 'success'); })
+    .catch(function() { showToast('复制失败，请手动选中文字复制', 'error'); });
+}
+
+function writeAgain() {
+  var resultPanel = document.getElementById('write-result');
+  var progressArea = document.getElementById('write-progress-area');
+  if (resultPanel) resultPanel.style.display = 'none';
+  if (progressArea) progressArea.style.display = 'none';
+  // 重置步骤
+  for (var i = 1; i <= 4; i++) {
+    var el = document.getElementById('wstep-' + i);
+    if (el) {
+      el.classList.remove('done', 'active');
+      var icon = el.querySelector('.wstep-icon');
+      if (icon) icon.textContent = '⏳';
+    }
+  }
+}
+
+// ─── 风格档案（多账号完整版）────────────────────────────────
+var profilesState = {
+  list: [],
+  activeId: 'yushtang',
+  activeData: null
+};
+
+function loadProfile() {
+  var el = document.getElementById('profile-content');
+  if (el) el.innerHTML = '<div class="loading-state">加载中...</div>';
+  fetchJSON('/api/profiles')
+    .then(function(data) {
+      profilesState.list = data.profiles || [];
+      renderProfilesTabs();
+      return loadProfileDetail(profilesState.activeId);
+    })
+    .catch(function(err) {
+      if (el) el.innerHTML = '<div class="empty-state">加载失败：' + escHtml(err.message) + '</div>';
+    });
+}
+
+function renderProfilesTabs() {
+  var tabsEl = document.getElementById('profiles-tabs');
+  if (!tabsEl) return;
+  var html = '';
+  for (var i = 0; i < profilesState.list.length; i++) {
+    var p = profilesState.list[i];
+    html += '<button class="profile-tab' + (p.id === profilesState.activeId ? ' active' : '') + '" onclick="switchProfileTab(\'' + escAttr(p.id) + '\')">';
+    html += '<span>' + escHtml(p.icon || '📝') + '</span>';
+    html += '<span>' + escHtml(p.name) + '</span>';
+    if (p.sample_count) html += '<span class="profile-tab-badge">' + p.sample_count + '篇</span>';
+    html += '</button>';
+  }
+  // 新增按钮
+  html += '<button class="profile-tab profile-tab-add" onclick="showCreateProfileModal()" title="新增账号档案">';
+  html += '<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>';
+  html += '<span>新增</span></button>';
+  tabsEl.innerHTML = html;
+}
+
+function switchProfileTab(id) {
+  profilesState.activeId = id;
+  renderProfilesTabs();
+  loadProfileDetail(id);
+}
+
+function loadProfileDetail(id) {
+  var el = document.getElementById('profile-content');
+  if (el) el.innerHTML = '<div class="loading-state">加载中...</div>';
+  return fetchJSON('/api/profiles/' + id)
+    .then(function(p) {
+      profilesState.activeData = p;
+      renderProfile(p);
+    })
+    .catch(function() {
+      if (el) {
+        el.innerHTML =
+          '<div class="profile-empty-state">' +
+            '<div class="profile-empty-icon">📝</div>' +
+            '<div class="profile-empty-text">此档案尚未建立风格数据</div>' +
+            '<div class="profile-empty-hint">请导入该公众号的历史文章，AI 将自动学习并建立风格档案</div>' +
+            '<button class="btn btn-primary" onclick="showImportSamplesPanel(\'' + escAttr(id) + '\')">导入文章样本</button>' +
+          '</div>';
+      }
+    });
+}
+
+function renderProfile(p) {
+  var el = document.getElementById('profile-content');
+  if (!el) return;
+  var pid = escAttr(p._profileId || '');
+  var isDefault = p._profileId === 'yushtang';
+
+  function chips(arr, cls) {
+    if (!arr || !arr.length) return '-';
+    return arr.map(function(k) { return '<span class="chip' + (cls ? ' ' + cls : '') + '">' + escHtml(k) + '</span>'; }).join('');
+  }
+  function kv(label, val) {
+    return '<div class="profile-kv"><div class="profile-key">' + label + '</div><div class="profile-val">' + val + '</div></div>';
+  }
+
+  var html = '';
+
+  // 顶部操作栏
+  html += '<div class="profile-detail-header">';
+  html += '<div class="profile-detail-meta">';
+  html += '<span class="profile-detail-icon">' + escHtml(p._profileIcon || '📝') + '</span>';
+  html += '<div>';
+  html += '<div class="profile-detail-name">' + escHtml(p._profileName || p._profileId || '') + '</div>';
+  html += '<div class="profile-detail-desc">' + escHtml(p._profileDescription || '') + '</div>';
+  html += '</div></div>';
+  html += '<div class="profile-detail-actions">';
+  html += '<button class="btn btn-secondary btn-sm" onclick="showImportSamplesPanel(\'' + pid + '\')">';
+  html += '<svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg> 导入文章 / 迭代学习</button>';
+  if (!isDefault) {
+    html += '<button class="btn btn-ghost btn-sm" style="color:#f87171" onclick="deleteProfile(\'' + pid + '\',\'' + escAttr(p._profileName || '') + '\')">删除档案</button>';
+  }
+  html += '</div></div>';
+
+  // 导入面板（折叠）
+  html += '<div class="import-samples-panel" id="import-samples-panel-' + pid + '" style="display:none">';
+  html += '<div class="panel-body" style="background:#f8fafc;border-radius:12px;padding:1.25rem;margin-bottom:1.5rem;border:1px solid #e2e8f0">';
+  html += '<div class="form-group"><label class="form-label">粘贴文章正文（每篇用 "---" 分隔，或每次粘贴一篇）</label>';
+  html += '<textarea class="form-textarea" id="samples-textarea-' + pid + '" rows="10" placeholder="粘贴该公众号的历史文章正文...\n\n建议导入 5-15 篇最有代表性的文章，AI 会学习你的写作特征：用词习惯、句式风格、段落结构等。\n\n每篇文章之间用一行 --- 分隔即可。"></textarea>';
+  html += '<div style="display:flex;justify-content:space-between;margin-top:0.5rem">';
+  html += '<span style="font-size:0.8rem;color:#94a3b8" id="samples-count-' + pid + '">0 字</span>';
+  html += '<label style="font-size:0.8rem;color:#94a3b8;cursor:pointer"><input type="file" accept=".txt,.md" multiple style="display:none" onchange="loadSamplesFromFiles(event,\'' + pid + '\')"> 📁 或上传 TXT 文件</label>';
+  html += '</div></div>';
+  html += '<div class="btn-row">';
+  html += '<button class="btn btn-primary" onclick="analyzeSamples(\'' + pid + '\')"><svg viewBox="0 0 24 24"><path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3zM5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82z"/></svg> 开始分析 / 迭代风格</button>';
+  html += '<button class="btn btn-ghost" onclick="document.getElementById(\'import-samples-panel-' + pid + '\').style.display=\'none\'">收起</button>';
+  html += '</div>';
+  html += '<div id="analyze-progress-' + pid + '" style="display:none;margin-top:0.75rem"><div class="write-progress-msg" id="analyze-msg-' + pid + '"></div></div>';
+  html += '</div></div>';
+
+  // 风格详情 grid
+  html += '<div class="profile-grid">';
+  html += '<div class="profile-card profile-summary"><div class="profile-card-title">风格总结</div>';
+  html += '<div class="profile-summary-text">' + escHtml(p.summary || '尚未分析') + '</div></div>';
+
+  html += '<div class="profile-card"><div class="profile-card-title">语气特征</div>';
+  html += kv('整体描述', escHtml(p.tone && p.tone.description || '-'));
+  html += kv('关键词', '<div class="chip-group">' + chips(p.tone && p.tone.keywords, 'accent') + '</div>');
+  html += kv('正式程度', escHtml(p.tone && p.tone.formality || '-'));
+  html += kv('情感强度', escHtml(p.tone && p.tone.emotion || '-'));
+  html += '</div>';
+
+  html += '<div class="profile-card"><div class="profile-card-title">写作视角</div>';
+  html += kv('叙述视角', escHtml(p.perspective && p.perspective.viewpoint || '-'));
+  html += kv('观点立场', escHtml(p.perspective && p.perspective.stance || '-'));
+  html += kv('文章类型', escHtml(p.perspective && p.perspective.style || '-'));
+  html += '</div>';
+
+  html += '<div class="profile-card"><div class="profile-card-title">文章结构</div>';
+  html += kv('开篇方式', escHtml(p.structure && p.structure.opening_style || '-'));
+  html += kv('正文逻辑', escHtml(p.structure && p.structure.body_logic || '-'));
+  html += kv('结尾方式', escHtml(p.structure && p.structure.closing_style || '-'));
+  html += kv('段落长度', escHtml(p.structure && p.structure.paragraph_length || '-'));
+  html += '</div>';
+
+  html += '<div class="profile-card"><div class="profile-card-title">语言特征</div>';
+  html += kv('词汇风格', escHtml(p.language && p.language.vocabulary_level || '-'));
+  html += kv('句子长度', escHtml(p.language && p.language.sentence_length || '-'));
+  html += kv('常用修辞', '<div class="chip-group">' + chips(p.language && p.language.rhetorical_devices) + '</div>');
+  html += kv('标志性表达', '<div class="chip-group">' + chips(p.language && p.language.signature_expressions, 'accent') + '</div>');
+  html += '</div>';
+
+  html += '<div class="profile-card"><div class="profile-card-title">内容偏好</div>';
+  html += kv('常写主题', '<div class="chip-group">' + chips(p.content && p.content.themes, 'accent') + '</div>');
+  html += kv('内容深度', escHtml(p.content && p.content.depth || '-'));
+  html += kv('数据使用', escHtml(p.content && p.content.data_usage || '-'));
+  html += kv('举例方式', escHtml(p.content && p.content.example_style || '-'));
+  html += '</div>';
+
+  html += '<div class="profile-card" style="grid-column:1/-1"><div class="profile-card-title">AI 写作指令（核心）</div>';
+  html += '<div class="instruction-box">' + escHtml(p.writing_instructions || '尚未建立') + '</div></div>';
+
+  if (p.sample_sentences && p.sample_sentences.length) {
+    html += '<div class="profile-card" style="grid-column:1/-1"><div class="profile-card-title">代表性句子</div>';
+    html += '<ul class="sentence-list">';
+    for (var i = 0; i < p.sample_sentences.length; i++) {
+      html += '<li>' + escHtml(p.sample_sentences[i]) + '</li>';
+    }
+    html += '</ul></div>';
+  }
+
+  if (p._meta) {
+    html += '<div class="profile-card"><div class="profile-card-title">档案元信息</div>';
+    html += kv('分析时间', escHtml((p._meta.analyzed_at || '').substring(0, 10) || '-'));
+    html += kv('累计样本', (p._meta.sample_count || 0) + ' 篇');
+    html += kv('使用模型', escHtml((p._meta.provider || '') + ' / ' + (p._meta.model || '')));
+    html += '</div>';
+  }
+
+  html += '</div>'; // .profile-grid
+
+  el.innerHTML = html;
+
+  // 绑定字数统计
+  var ta = document.getElementById('samples-textarea-' + p._profileId);
+  var cnt = document.getElementById('samples-count-' + p._profileId);
+  if (ta && cnt) {
+    ta.addEventListener('input', function() {
+      cnt.textContent = ta.value.replace(/\s/g, '').length + ' 字';
+    });
+  }
+}
+
+function showImportSamplesPanel(profileId) {
+  var panel = document.getElementById('import-samples-panel-' + profileId);
+  if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+function loadSamplesFromFiles(event, profileId) {
+  var files = Array.from(event.target.files);
+  var ta = document.getElementById('samples-textarea-' + profileId);
+  if (!ta || !files.length) return;
+  Promise.all(files.map(function(f) { return f.text(); })).then(function(texts) {
+    ta.value = texts.join('\n\n---\n\n');
+    var cnt = document.getElementById('samples-count-' + profileId);
+    if (cnt) cnt.textContent = ta.value.replace(/\s/g, '').length + ' 字';
+    showToast('已加载 ' + files.length + ' 个文件');
+  });
+}
+
+function analyzeSamples(profileId) {
+  var ta = document.getElementById('samples-textarea-' + profileId);
+  var text = ta ? ta.value.trim() : '';
+  if (!text || text.length < 100) { showToast('文章样本太少，请粘贴更多内容', 'error'); return; }
+
+  var rawSamples = text.split(/\n[-—]{3,}\n/).map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 50; });
+  if (!rawSamples.length) { showToast('未识别到有效文章，请确保每篇之间用 "---" 分隔', 'error'); return; }
+
+  var samples = rawSamples.map(function(content, i) {
+    var lines = content.split('\n');
+    var title = lines[0].replace(/^#\s*/, '').trim().substring(0, 50) || ('样本 ' + (i + 1));
+    return { title: title, content: content };
+  });
+
+  var progressEl = document.getElementById('analyze-progress-' + profileId);
+  var msgEl = document.getElementById('analyze-msg-' + profileId);
+  if (progressEl) progressEl.style.display = 'block';
+  if (msgEl) msgEl.textContent = '正在连接 AI 分析...';
+
+  fetch('/api/profiles/' + profileId + '/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ samples: samples, merge: true })
+  }).then(function(resp) {
+    if (!resp.ok) throw new Error('服务器错误 ' + resp.status);
+    if (!resp.body) throw new Error('浏览器不支持流式读取');
+    var reader = resp.body.getReader();
+    var decoder = new TextDecoder();
+    var buffer = '';
+    function pump() {
+      return reader.read().then(function(ref) {
+        if (ref.done) return;
+        buffer += decoder.decode(ref.value, { stream: true });
+        var lines = buffer.split('\n');
+        buffer = lines.pop();
+        lines.forEach(function(line) {
+          if (!line.startsWith('data:')) return;
+          var msg = JSON.parse(line.slice(5).trim());
+          if (msg.type === 'progress' && msgEl) msgEl.textContent = msg.msg;
+          if (msg.__done) {
+            if (msg.error) {
+              showToast('分析失败：' + msg.error, 'error');
+              if (msgEl) msgEl.textContent = '⚠️ ' + msg.error;
+            } else {
+              showToast('风格分析完成，档案已更新！', 'success');
+              profilesState.activeData = msg.profile;
+              var idx = profilesState.list.findIndex(function(p) { return p.id === profileId; });
+              if (idx !== -1) profilesState.list[idx].sample_count = (msg.profile._meta && msg.profile._meta.sample_count) || 0;
+              renderProfilesTabs();
+              renderProfile(msg.profile);
+              loadCustomProfileOptions && loadCustomProfileOptions();
+            }
+          }
+        });
+        return pump();
+      });
+    }
+    return pump();
+  }).catch(function(err) {
+    showToast('分析失败：' + err.message, 'error');
+    if (msgEl) msgEl.textContent = '⚠️ ' + err.message;
+  });
+}
+
+function showCreateProfileModal() {
+  var modal = document.getElementById('create-profile-modal');
+  if (modal) modal.classList.add('open');
+}
+
+function closeCreateProfileModal(e) {
+  var modal = document.getElementById('create-profile-modal');
+  if (e.target === modal) modal.classList.remove('open');
+}
+
+function createProfile() {
+  var nameEl = document.getElementById('new-profile-name');
+  var iconEl = document.getElementById('new-profile-icon');
+  var descEl = document.getElementById('new-profile-desc');
+  var name = nameEl ? nameEl.value.trim() : '';
+  var icon = (iconEl ? iconEl.value.trim() : '') || '📝';
+  var desc = descEl ? descEl.value.trim() : '';
+  if (!name) { showToast('请填写档案名称', 'error'); return; }
+
+  fetchJSON('/api/profiles', { method: 'POST', body: { name: name, icon: icon, description: desc } })
+    .then(function(data) {
+      showToast('「' + name + '」档案已创建');
+      document.getElementById('create-profile-modal').classList.remove('open');
+      ['new-profile-name','new-profile-icon','new-profile-desc'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.value = id === 'new-profile-icon' ? '📝' : '';
+      });
+      profilesState.activeId = data.id;
+      loadProfile();
+    })
+    .catch(function(err) {
+      showToast('创建失败：' + err.message, 'error');
+    });
+}
+
+function deleteProfile(id, name) {
+  if (!confirm('确认删除「' + name + '」档案？此操作不可撤销。')) return;
+  fetchJSON('/api/profiles/' + id, { method: 'DELETE' })
+    .then(function() {
+      showToast('已删除「' + name + '」');
+      profilesState.activeId = 'yushtang';
+      loadProfile();
+    })
+    .catch(function(err) {
+      showToast('删除失败：' + err.message, 'error');
+    });
+}
+
+// ─── 历史文章 ────────────────────────────────────────────────
+function loadHistory() {
+  var listEl = document.getElementById('history-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="loading-state">加载历史文章...</div>';
+
+  fetch('/api/history')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      renderHistoryList(data, listEl);
+    })
+    .catch(function(err) {
+      listEl.innerHTML = '<div class="error-state">加载失败</div>';
+    });
+}
+
+function renderHistoryList(data, listEl) {
+  var articles = data.articles || data || [];
+  if (!articles || articles.length === 0) {
+    listEl.innerHTML = '<div class="empty-state">暂无历史文章</div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < articles.length; i++) {
+    var art = articles[i];
+    html += '<div class="article-item" onclick="openArticleModal(\'' + escAttr(art.id || art.name || '') + '\')" style="cursor:pointer">';
+    html += '<div class="article-title">' + escHtml(art.title || art.name || '无标题') + '</div>';
+    html += '<div class="article-meta">' + formatDate(art.created_at || art.mtime || '') + '</div>';
+    html += '</div>';
+  }
+  listEl.innerHTML = html;
+  window._historyArticles = articles;
+}
+
+function openArticleModal(idOrName) {
+  var articles = window._historyArticles || [];
+  var art = null;
+  for (var i = 0; i < articles.length; i++) {
+    if ((articles[i].id || articles[i].name) === idOrName) { art = articles[i]; break; }
+  }
+  if (!art) return;
+
+  var modal = document.getElementById('article-modal');
+  var modalTitle = document.getElementById('modal-title');
+  var modalContent = document.getElementById('modal-content');
+
+  if (modalTitle) modalTitle.textContent = art.title || '无标题';
+  if (modalContent) {
+    var content = art.content || art.body || '';
+    modalContent.innerHTML = (typeof marked !== 'undefined' && content) ? marked.parse(content) : escHtml(content).replace(/\n/g, '<br>');
+  }
+  if (modal) modal.classList.add('active');
+}
+
+function closeModal(event) {
+  if (event && event.target === document.getElementById('article-modal')) {
+    closeArticleModal();
+  }
+}
+
+function closeArticleModal() {
+  var modal = document.getElementById('article-modal');
+  if (modal) modal.classList.remove('active');
+}
+
+// ─── 参考仿写 ────────────────────────────────────────────────
+function loadRefArticles() {
+  var listEl = document.getElementById('ref-article-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="loading-state">加载参考文章...</div>';
+
+  fetch('/api/ref-articles')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      refArticles = data.articles || data || [];
+      renderRefArticleList(refArticles);
+    })
+    .catch(function() {
+      if (listEl) listEl.innerHTML = '<div class="error-state">加载失败</div>';
+    });
+}
+
+function renderRefArticleList(articles) {
+  var listEl = document.getElementById('ref-article-list');
+  if (!listEl) return;
+  if (!articles || articles.length === 0) {
+    listEl.innerHTML = '<div class="empty-state">暂无参考文章，请添加</div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < articles.length; i++) {
+    var art = articles[i];
+    var isSelected = selectedRefIds.indexOf(art.id) !== -1;
+    html += '<div class="ref-article-item ' + (isSelected ? 'selected' : '') + '" id="ref-item-' + art.id + '">';
+    html += '<label class="ref-item-check">';
+    html += '<input type="checkbox" class="ref-checkbox" value="' + escAttr(art.id) + '" ' + (isSelected ? 'checked' : '') + ' onchange="toggleRefSelection(\'' + escAttr(art.id) + '\')" />';
+    html += '<div class="ref-item-body">';
+    html += '<div class="ref-item-title">' + escHtml(art.title || '无标题') + '</div>';
+    var charCount = art.char_count || (art.content ? art.content.length : 0);
+    html += '<div class="ref-item-meta">' + charCount + ' 字</div>';
+    html += '</div>';
+    html += '</label>';
+    html += '<button class="btn btn-ghost btn-sm ref-delete-btn" onclick="deleteRefArticle(\'' + escAttr(art.id) + '\', event)">删除</button>';
+    html += '</div>';
+  }
+  listEl.innerHTML = html;
+  // 更新字数统计（绑定 textarea 事件）
+  updateRefCharCount();
+}
+
+function toggleRefSelection(id) {
+  var idx = selectedRefIds.indexOf(id);
+  if (idx === -1) {
+    if (selectedRefIds.length >= 5) { showToast('最多选择 5 篇参考文章', 'warning'); return; }
+    selectedRefIds.push(id);
+  } else {
+    selectedRefIds.splice(idx, 1);
+  }
+  // 更新 UI
+  var el = document.getElementById('ref-item-' + id);
+  if (el) el.classList.toggle('selected', selectedRefIds.indexOf(id) !== -1);
+  updateRefBadge();
+  updateImitateHint();
+}
+
+function updateRefBadge() {
+  var badge = document.getElementById('ref-selected-badge');
+  if (badge) badge.textContent = selectedRefIds.length > 0 ? '已选 ' + selectedRefIds.length + ' 篇' : '';
+}
+
+function updateImitateHint() {
+  var hint = document.getElementById('imitate-hint');
+  if (hint) hint.style.display = selectedRefIds.length > 0 ? 'none' : '';
+}
+
+function saveRefArticle() {
+  var titleInput = document.getElementById('ref-title');
+  var contentInput = document.getElementById('ref-content');
+  var title = titleInput ? titleInput.value.trim() : '';
+  var content = contentInput ? contentInput.value.trim() : '';
+  if (!title) { showToast('请输入文章标题', 'warning'); return; }
+  if (!content) { showToast('请粘贴文章正文', 'warning'); return; }
+
+  var btn = document.getElementById('btn-save-ref');
+  if (btn) btn.disabled = true;
+
+  fetch('/api/ref-articles', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: title, content: content })
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.error) throw new Error(data.error);
+      showToast('参考文章已保存', 'success');
+      if (titleInput) titleInput.value = '';
+      if (contentInput) contentInput.value = '';
+      updateRefCharCount();
+      loadRefArticles();
+      if (btn) btn.disabled = false;
+    })
+    .catch(function(err) {
+      showToast('保存失败：' + err.message, 'error');
+      if (btn) btn.disabled = false;
+    });
+}
+
+function deleteRefArticle(id, event) {
+  event.stopPropagation();
+  if (!confirm('确认删除这篇参考文章？')) return;
+  fetch('/api/ref-articles/' + id, { method: 'DELETE' })
+    .then(function(r) { return r.json(); })
+    .then(function() {
+      var idx = selectedRefIds.indexOf(id);
+      if (idx !== -1) selectedRefIds.splice(idx, 1);
+      loadRefArticles();
+      updateRefBadge();
+    })
+    .catch(function() { showToast('删除失败', 'error'); });
+}
+
+function toggleRefAddArea() {
+  var area = document.getElementById('ref-add-area');
+  if (!area) return;
+  area.style.display = area.style.display === 'none' ? '' : 'none';
+}
+
+function updateRefCharCount() {
+  var contentInput = document.getElementById('ref-content');
+  var counter = document.getElementById('ref-char-count');
+  if (!contentInput || !counter) return;
+  counter.textContent = contentInput.value.length + ' 字';
+  contentInput.addEventListener('input', function() {
+    counter.textContent = contentInput.value.length + ' 字';
+  });
+}
+
+function startImitate() {
+  if (selectedRefIds.length === 0) { showToast('请先勾选参考文章', 'warning'); return; }
+  var topicInput = document.getElementById('imitate-topic');
+  var topic = topicInput ? topicInput.value.trim() : '';
+  if (!topic) { showToast('请输入本次想写的主题', 'warning'); return; }
+
+  var noteInput = document.getElementById('imitate-note');
+  var note = noteInput ? noteInput.value.trim() : '';
+  var progressArea = document.getElementById('imitate-progress-area');
+  var btnImitate = document.getElementById('btn-imitate');
+  var resultPanel = document.getElementById('imitate-result');
+
+  if (progressArea) progressArea.style.display = '';
+  if (btnImitate) btnImitate.disabled = true;
+  if (resultPanel) resultPanel.style.display = 'none';
+
+  setImitateStep(1, 'active');
+
+  var params = new URLSearchParams({
+    refIds: selectedRefIds.join(','),
+    topic: topic,
+    note: note
+  });
+
+  if (imitateEventSource) { imitateEventSource.close(); imitateEventSource = null; }
+  imitateEventSource = new EventSource('/api/imitate?' + params.toString());
+
+  imitateEventSource.onmessage = function(e) {
+    var d = JSON.parse(e.data);
+    var msg = document.getElementById('imitate-progress-msg');
+    if (msg && d.msg) msg.textContent = d.msg;
+    if (d.step) setImitateStep(d.step, 'active');
+    if (d.__done) {
+      setImitateStep(4, 'done');
+      if (progressArea) progressArea.style.display = 'none';
+      if (btnImitate) btnImitate.disabled = false;
+      if (d.error) {
+        showToast('仿写失败：' + d.error, 'error');
+      } else {
+        renderImitateResult(d);
+      }
+      if (imitateEventSource) { imitateEventSource.close(); imitateEventSource = null; }
+    }
+  };
+  imitateEventSource.onerror = function() {
+    if (progressArea) progressArea.style.display = 'none';
+    if (btnImitate) btnImitate.disabled = false;
+    showToast('仿写失败，请重试', 'error');
+    if (imitateEventSource) { imitateEventSource.close(); imitateEventSource = null; }
+  };
+}
+
+function setImitateStep(step, status) {
+  for (var i = 1; i <= 4; i++) {
+    var el = document.getElementById('istep-' + i);
+    if (!el) continue;
+    var icon = el.querySelector('.wstep-icon');
+    if (i < step) {
+      el.classList.add('done');
+      if (icon) icon.textContent = '✓';
+    } else if (i === step) {
+      el.classList.add('active');
+      if (icon) icon.textContent = '⚡';
+    }
+  }
+}
+
+function renderImitateResult(data) {
+  var resultPanel = document.getElementById('imitate-result');
+  var resultTitle = document.getElementById('imitate-result-title');
+  var resultContent = document.getElementById('imitate-content');
+  var resultWordcount = document.getElementById('imitate-wordcount');
+  var resultTags = document.getElementById('imitate-tags');
+  var resultSummary = document.getElementById('imitate-summary');
+
+  if (!resultPanel) return;
+  if (resultTitle) resultTitle.textContent = data.title || '仿写结果';
+  if (resultContent && data.content) {
+    resultContent.innerHTML = (typeof marked !== 'undefined') ? marked.parse(data.content) : escHtml(data.content).replace(/\n/g, '<br>');
+  }
+  if (resultWordcount) {
+    var wc = data.content ? data.content.replace(/\s/g, '').length : 0;
+    resultWordcount.textContent = wc + ' 字';
+  }
+  if (resultTags && data.tags) {
+    var tagsHtml = '';
+    for (var i = 0; i < data.tags.length; i++) {
+      tagsHtml += '<span class="tag-chip">' + escHtml(data.tags[i]) + '</span>';
+    }
+    resultTags.innerHTML = tagsHtml;
+  }
+  if (resultSummary && data.summary) {
+    resultSummary.textContent = data.summary;
+    resultSummary.style.display = '';
+  }
+  resultPanel.style.display = '';
+  resultPanel.scrollIntoView({ behavior: 'smooth' });
+  window._lastImitateContent = data.content || '';
+}
+
+function copyImitateResult() {
+  var content = window._lastImitateContent || '';
+  if (!content) { showToast('没有可复制的内容', 'warning'); return; }
+  navigator.clipboard.writeText(content)
+    .then(function() { showToast('已复制到剪贴板', 'success'); })
+    .catch(function() { showToast('复制失败', 'error'); });
+}
+
+function resetImitate() {
+  var resultPanel = document.getElementById('imitate-result');
+  var progressArea = document.getElementById('imitate-progress-area');
+  if (resultPanel) resultPanel.style.display = 'none';
+  if (progressArea) progressArea.style.display = 'none';
+  for (var i = 1; i <= 4; i++) {
+    var el = document.getElementById('istep-' + i);
+    if (el) {
+      el.classList.remove('done', 'active');
+      var icon = el.querySelector('.wstep-icon');
+      if (icon) icon.textContent = '⏳';
+    }
+  }
+}
+
+// ─── 工具函数 ────────────────────────────────────────────────
+function escHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escAttr(str) {
+  if (!str) return '';
+  return String(str).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  try {
+    var d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    var now = new Date();
+    var diff = (now - d) / 1000;
+    if (diff < 60) return '刚刚';
+    if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
+    if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
+    if (diff < 86400 * 7) return Math.floor(diff / 86400) + ' 天前';
+    return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+  } catch(e) {
+    return dateStr;
+  }
+}
+
+// ─── 初始化 ──────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  // 初始化 AI 状态
+  checkAIStatus();
+  // 加载热点（热点页才懒加载，仪表盘也需要热点 badge）
+  loadHotTopics(false);
+  // 初始化参考文章字数统计
+  updateRefCharCount();
+  // 更新仿写提示
+  updateImitateHint();
+});

@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Environment variables
+config.yaml
+.env
+.env.local
+.env.*.local
+
+# Data and output
+data/
+output/
+*.log
+*.tmp
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Backup files
+*.bak
+*.backup
+*_backup*
+*_old.*
+
+# Test files
+test-*.js
+*.test.js
+*.spec.js
+
+# Temporary patches
+patch_*.js
+
+# Documentation not needed in production
+DIAGNOSTIC_REPORT.md
+v*.md
+v*.html
+*.md.backup
+WECHAT_API_GUIDE.md
+开发踩坑总结*
+
+# Build artifacts
+dist/
+build/
+.cache/

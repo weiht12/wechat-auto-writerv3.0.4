@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>公众号 · 写作助手</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- marked.js for markdown rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+  <!-- ── 侧边导航 ───────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">豫</div>
+      <div class="logo-text">
+        <span class="logo-title">公众号</span>
+        <span class="logo-sub">写作助手 v2.0</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a class="nav-item active" data-page="dashboard" onclick="navigate('dashboard')">
+        <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+        <span>仪表盘</span>
+      </a>
+      <a class="nav-item" data-page="hot" onclick="navigate('hot')">
+        <svg viewBox="0 0 24 24"><path d="M13.5 0.67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14c0 4.42 3.58 8 8 8s8-3.58 8-8C20 8.61 17.41 3.8 13.5 0.67zM11.71 19c-1.78 0-3.22-1.4-3.22-3.14 0-1.62 1.05-2.76 2.81-3.12 1.77-.36 3.6-1.21 4.62-2.58.39 1.29.59 2.65.59 4.04 0 2.65-2.15 4.8-4.8 4.8z"/></svg>
+        <span>每日热点</span>
+        <span class="badge" id="badge-hot"></span>
+      </a>
+      <a class="nav-item" data-page="write" onclick="navigate('write')">
+        <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+        <span>生成文章</span>
+      </a>
+      <a class="nav-item" data-page="profile" onclick="navigate('profile')">
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+        <span>风格档案</span>
+      </a>
+      <a class="nav-item" data-page="history" onclick="navigate('history')">
+        <svg viewBox="0 0 24 24"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+        <span>历史文章</span>
+      </a>
+      <a class="nav-item" data-page="imitate" onclick="navigate('imitate')">
+        <svg viewBox="0 0 24 24"><path d="M9 11.75A1.25 1.25 0 1 0 9 14.25 1.25 1.25 0 0 0 9 11.75zm6 0a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5zM12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8 0-.29.02-.58.05-.86 2.36-1.05 4.23-2.98 5.21-5.37C11.07 8.33 14.05 10 17.42 10c.78 0 1.53-.09 2.25-.26.21.71.33 1.47.33 2.26 0 4.41-3.59 8-8 8z"/></svg>
+        <span>参考仿写</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="status-dot" id="ai-status-dot"></div>
+      <span id="ai-status-text">检测中...</span>
+    </div>
+  </aside>
+
+  <!-- ── 主内容区 ──────────────────────────────────────────── -->
+  <main class="main">
+
+    <!-- ═══════════ 仪表盘 ═══════════ -->
+    <section id="page-dashboard" class="page active">
+      <div class="page-header">
+        <h1 class="page-title">仪表盘</h1>
+        <p class="page-desc">欢迎回来，堂主！今天也是为河南发声的一天。</p>
+      </div>
+
+      <div class="cards-grid">
+        <div class="card card-accent">
+          <div class="card-icon"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg></div>
+          <div class="card-body">
+            <div class="card-label">风格档案</div>
+            <div class="card-value" id="stat-profile">加载中...</div>
+            <div class="card-meta" id="stat-profile-meta"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-icon card-icon-orange"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/></svg></div>
+          <div class="card-body">
+            <div class="card-label">历史文章库</div>
+            <div class="card-value" id="stat-articles">加载中...</div>
+            <div class="card-meta" id="stat-articles-meta"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-icon card-icon-green"><svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg></div>
+          <div class="card-body">
+            <div class="card-label">已生成文章</div>
+            <div class="card-value" id="stat-output">加载中...</div>
+            <div class="card-meta" id="stat-output-meta"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-icon card-icon-red"><svg viewBox="0 0 24 24"><path d="M13.5 0.67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14c0 4.42 3.58 8 8 8s8-3.58 8-8C20 8.61 17.41 3.8 13.5 0.67z"/></svg></div>
+          <div class="card-body">
+            <div class="card-label">今日热点缓存</div>
+            <div class="card-value" id="stat-hot">加载中...</div>
+            <div class="card-meta" id="stat-hot-meta"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 快捷操作 -->
+      <div class="section-title">快捷操作</div>
+      <div class="quick-actions">
+        <button class="btn btn-primary btn-large" onclick="navigate('hot')">
+          <svg viewBox="0 0 24 24"><path d="M13.5 0.67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14c0 4.42 3.58 8 8 8s8-3.58 8-8C20 8.61 17.41 3.8 13.5 0.67z"/></svg>
+          查看今日热点
+        </button>
+        <button class="btn btn-secondary btn-large" onclick="navigate('write')">
+          <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+          立即写文章
+        </button>
+        <button class="btn btn-ghost btn-large" onclick="navigate('profile')">
+          <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+          查看风格档案
+        </button>
+      </div>
+
+      <!-- 最近文章 -->
+      <div class="section-title" style="margin-top:2rem">最近生成的文章</div>
+      <div class="article-list" id="recent-articles">
+        <div class="loading-state">加载中...</div>
+      </div>
+    </section>
+
+    <!-- ═══════════ 每日热点 ═══════════ -->
+    <section id="page-hot" class="page">
+      <div class="page-header">
+        <h1 class="page-title">每日热点</h1>
+        <p class="page-desc" id="hot-date-desc">正在加载今日河南热点...</p>
+      </div>
+
+      <!-- Tab 切换：本地热点 / 全网热点 -->
+      <div class="hot-tabs">
+        <button class="hot-tab active" id="hot-tab-local" onclick="switchHotTab('local')">
+          <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+          本地热点
+        </button>
+        <button class="hot-tab" id="hot-tab-global" onclick="switchHotTab('global')">
+          <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+          全网热点
+        </button>
+      </div>
+
+      <!-- 本地热点内容 -->
+      <div id="hot-content-local">
+
+        <!-- 模式切换：今日热点 / 关键词搜索 -->
+        <div class="hot-mode-tabs">
+          <button class="hot-mode-tab active" id="hot-mode-today" onclick="switchHotMode('today')">
+            <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+            今日热点
+            <span class="mode-badge">自动</span>
+          </button>
+          <button class="hot-mode-tab" id="hot-mode-search" onclick="switchHotMode('search')">
+            <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            关键词搜索
+          </button>
+        </div>
+
+        <!-- 今日热点模式内容 -->
+        <div id="hot-mode-content-today">
+          <!-- 来源状态栏 -->
+          <div class="source-bar source-bar-today" id="today-source-bar">
+            <div class="source-item" id="src-dahecube">
+              <span class="source-dot"></span>
+              <span class="source-label">大河财立方</span>
+              <span class="source-count">-</span>
+            </div>
+            <div class="source-item" id="src-gov">
+              <span class="source-dot"></span>
+              <span class="source-label">河南省政府</span>
+              <span class="source-count">-</span>
+            </div>
+            <div class="source-item" id="src-baidu">
+              <span class="source-dot"></span>
+              <span class="source-label">百度新闻</span>
+              <span class="source-count">-</span>
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="loadHotTopics(true)" id="btn-refresh">
+              <svg viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+              刷新
+            </button>
+          </div>
+          <!-- 进度条 -->
+          <div class="progress-bar" id="hot-progress" style="display:none">
+            <div class="progress-fill"></div>
+          </div>
+          <div class="progress-msg" id="hot-progress-msg"></div>
+        </div>
+
+        <!-- 关键词搜索模式内容 -->
+        <div id="hot-mode-content-search" style="display:none">
+          <!-- 搜索框 -->
+          <div class="local-hot-search-bar">
+            <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            <input
+              type="text"
+              id="local-hot-keyword"
+              class="local-hot-keyword-input"
+              placeholder="输入关键词搜索，如：郑州地铁、河南高铁..."
+              onkeydown="if(event.key==='Enter') searchLocalHotTopics()"
+            />
+            <button class="btn btn-primary btn-sm" id="btn-local-search" onclick="searchLocalHotTopics()">
+              搜索
+            </button>
+          </div>
+          <!-- 来源状态栏 -->
+          <div class="source-bar source-bar-search" id="search-source-bar" style="display:none">
+            <div class="source-item" id="src-search-baidu">
+              <span class="source-dot"></span>
+              <span class="source-label">百度新闻</span>
+              <span class="source-count">-</span>
+            </div>
+            <div class="source-item" id="src-search-bing">
+              <span class="source-dot"></span>
+              <span class="source-label">必应</span>
+              <span class="source-count">-</span>
+            </div>
+            <div class="source-item" id="src-search-google">
+              <span class="source-dot"></span>
+              <span class="source-label">Google</span>
+              <span class="source-count">-</span>
+            </div>
+          </div>
+          <!-- 搜索进度 -->
+          <div id="local-search-progress" style="display:none">
+            <div class="progress-bar"><div class="progress-fill"></div></div>
+            <div class="progress-msg" id="local-search-msg"></div>
+          </div>
+        </div>
+
+        <!-- 热点列表（两种模式共用） -->
+        <div id="hot-topics-list" class="topics-list"></div>
+      </div>
+
+      <!-- 全网热点内容 -->
+      <div id="hot-content-global" style="display:none">
+        <div class="global-hot-controls">
+          <div class="form-group flex-1">
+            <input type="text" class="form-input" id="global-hot-query" placeholder="输入关键词搜索全网热点（留空则搜索今日热点）" />
+          </div>
+          <button class="btn btn-primary" id="btn-global-search" onclick="loadGlobalHot()">
+            <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            搜索全网
+          </button>
+        </div>
+
+        <!-- 全网热点进度 -->
+        <div class="progress-bar" id="global-hot-progress" style="display:none">
+          <div class="progress-fill"></div>
+        </div>
+        <div class="progress-msg" id="global-hot-msg"></div>
+
+        <!-- 来源状态（Tavily） -->
+        <div class="source-bar" id="global-source-bar" style="display:none; margin-top:12px;">
+          <div class="source-item">
+            <span class="source-dot"></span>
+            <span class="source-label">Tavily</span>
+            <span class="source-count">-</span>
+          </div>
+        </div>
+
+        <!-- 全网热点列表 -->
+        <div id="global-hot-list" class="topics-list"></div>
+      </div>
+    </section>
+
+    <!-- ═══════════ 生成文章 ═══════════ -->
+    <section id="page-write" class="page">
+      <div class="page-header">
+        <h1 class="page-title">生成文章</h1>
+        <p class="page-desc">输入关键词，AI 将参考堂主风格进行聚合改写</p>
+      </div>
+
+      <!-- Step 1: 关键词 + 文章选择 -->
+      <div class="write-panel" id="write-step1">
+        <div class="panel-header">
+          <span class="step-badge">Step 1</span>
+          <span>搜索新闻素材</span>
+        </div>
+        <div class="panel-body">
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">搜索关键词</label>
+              <input type="text" class="form-input" id="kw-input" placeholder="如：郑州机场、河南高铁、郑州都市圈..." />
+            </div>
+            <div class="form-group">
+              <label class="form-label">抓取数量</label>
+              <select class="form-select" id="count-select">
+                <option value="3">3篇（快速）</option>
+                <option value="5" selected>5篇（推荐）</option>
+                <option value="8">8篇（丰富）</option>
+              </select>
+            </div>
+            <div class="form-group form-btn-group">
+              <button class="btn btn-primary" id="btn-fetch" onclick="fetchNews()">
+                <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                搜索新闻
+              </button>
+            </div>
+          </div>
+
+          <!-- Tavily 全网搜索开关 -->
+          <div class="tavily-toggle-row">
+            <label class="toggle-switch">
+              <input type="checkbox" id="tavily-enabled" />
+              <span class="toggle-slider"></span>
+              <span class="toggle-label">启用 Tavily 全网搜索</span>
+            </label>
+            <span class="toggle-desc">搜索结果将包含全网相关新闻，不再局限于固定源</span>
+          </div>
+
+          <!-- 新闻列表 -->
+          <div id="news-list" class="news-list" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- Step 2: 文章生成 -->
+      <div class="write-panel" id="write-step2" style="display:none">
+        <div class="panel-header">
+          <span class="step-badge step-badge-2">Step 2</span>
+          <span>AI 聚合改写</span>
+          <span class="badge-selected" id="selected-count-badge"></span>
+        </div>
+        <div class="panel-body">
+          <!-- 写作模式选择 -->
+          <div class="mode-selector">
+            <label class="mode-option mode-option-default active" id="mode-default">
+              <input type="radio" name="write-mode" value="default" checked onchange="switchWriteMode('default')" />
+              <div class="mode-card">
+                <div class="mode-icon">⚡</div>
+                <div class="mode-title">直接AI聚合改写</div>
+                <div class="mode-desc">AI 自主分析选定文章，融合堂主风格自动生成文章</div>
+              </div>
+            </label>
+            <label class="mode-option" id="mode-custom">
+              <input type="radio" name="write-mode" value="custom" onchange="switchWriteMode('custom')" />
+              <div class="mode-card">
+                <div class="mode-icon">🎯</div>
+                <div class="mode-title">自定义写作方向</div>
+                <div class="mode-desc">指定文章主题方向或提供大纲，AI 按你的意图创作</div>
+              </div>
+            </label>
+          </div>
+
+          <!-- 自定义方向表单（默认隐藏） -->
+          <div class="custom-direction-form" id="custom-direction-form" style="display:none">
+            <div class="form-group">
+              <label class="form-label">写作方向说明</label>
+              <textarea class="form-textarea" id="custom-direction" rows="3"
+                placeholder="简要说明你想让文章从哪个角度切入&#10;例如：&#10;• 从读者视角解读政策，重点讲实惠&#10;• 侧重数据对比，用图表形式呈现&#10;• 以讲故事的方式，穿插典型案例"></textarea>
+            </div>
+            <div class="form-group">
+              <label class="form-label">文章大纲（可选）</label>
+              <textarea class="form-textarea" id="custom-outline" rows="5"
+                placeholder="如果需要，可以提供文章大纲，AI 将严格按大纲展开&#10;例如：&#10;1. 引言：郑州地铁现状与规划背景&#10;2. 主体：三条新线详情（长度、站点、特色）&#10;3. 数据对比：与其他城市地铁发展情况&#10;4. 展望：对市民生活的影响"></textarea>
+            </div>
+
+            <!-- 深度研究选项 -->
+            <div class="research-toggle-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="deep-research-enabled" />
+                <span class="toggle-slider"></span>
+                <span class="toggle-label">启用深度研究</span>
+              </label>
+              <span class="toggle-desc">AI 将自动搜索相关资料，补充数据、案例和专家观点</span>
+            </div>
+
+            <!-- 风格档案选项 -->
+            <div class="research-toggle-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="style-profile-enabled" checked />
+                <span class="toggle-slider"></span>
+                <span class="toggle-label">加载堂主风格档案</span>
+              </label>
+              <span class="toggle-desc">AI 将模仿风格档案的写作风格（取消勾选则使用通用风格）</span>
+            </div>
+          </div>
+
+          <!-- 风格档案提示 -->
+          <div class="style-info" id="style-info-bar">
+            <div class="style-info-icon">🎨</div>
+            <div class="style-info-text">已加载堂主风格档案，AI 将模仿写作风格进行改写</div>
+          </div>
+          <button class="btn btn-primary btn-large w-full" id="btn-write" onclick="writeArticle()">
+            <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+            开始生成文章
+          </button>
+
+          <!-- 生成进度 -->
+          <div id="write-progress-area" style="display:none">
+            <div class="write-steps">
+              <div class="write-step" id="wstep-1"><span class="wstep-icon">⏳</span><span>抓取新闻</span></div>
+              <div class="write-step" id="wstep-2"><span class="wstep-icon">⏳</span><span>加载风格</span></div>
+              <div class="write-step" id="wstep-3"><span class="wstep-icon">⏳</span><span>AI改写</span></div>
+              <div class="write-step" id="wstep-4"><span class="wstep-icon">⏳</span><span>推送草稿</span></div>
+            </div>
+            <div class="write-progress-msg" id="write-progress-msg"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3: 预览结果 -->
+      <div class="write-panel" id="write-result" style="display:none">
+        <div class="panel-header">
+          <span class="step-badge step-badge-3">完成</span>
+          <span id="result-title-header">文章已生成</span>
+          <div class="result-actions">
+            <button class="btn btn-ghost btn-sm" onclick="copyArticle()">
+              <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+              复制正文
+            </button>
+            <button class="btn btn-ghost btn-sm" onclick="writeAgain()">
+              <svg viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+              重新生成
+            </button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="article-meta-bar">
+            <span id="result-wordcount"></span>
+            <span id="result-tags"></span>
+            <span id="result-wx-status"></span>
+          </div>
+          <div class="article-summary-box" id="result-summary" style="display:none"></div>
+          <div class="article-preview" id="result-content"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ 风格档案 ═══════════ -->
+    <section id="page-profile" class="page">
+      <div class="page-header">
+        <h1 class="page-title">风格档案</h1>
+        <p class="page-desc">堂主的写作 DNA —— AI 创作的灵魂所在</p>
+      </div>
+      <div id="profile-content">
+        <div class="loading-state">加载中...</div>
+      </div>
+    </section>
+
+    <!-- ═══════════ 历史文章 ═══════════ -->
+    <section id="page-history" class="page">
+      <div class="page-header">
+        <h1 class="page-title">历史文章</h1>
+        <p class="page-desc">所有已生成的文章，点击查看全文</p>
+      </div>
+      <div id="history-list" class="article-list">
+        <div class="loading-state">加载中...</div>
+      </div>
+
+      <!-- 文章详情弹窗 -->
+      <div class="modal-overlay" id="article-modal" onclick="closeModal(event)">
+        <div class="modal">
+          <div class="modal-header">
+            <h2 class="modal-title" id="modal-title"></h2>
+            <button class="modal-close" onclick="closeArticleModal()">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="article-preview" id="modal-content"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ 参考文章仿写 ═══════════ -->
+    <section id="page-imitate" class="page">
+      <div class="page-header">
+        <h1 class="page-title">参考文章仿写</h1>
+        <p class="page-desc">导入参考文章，AI 学习其风格，围绕你指定的主题进行二次仿写创作</p>
+      </div>
+
+      <div class="imitate-layout">
+
+        <!-- 左列：参考文章库 -->
+        <div class="imitate-left">
+          <div class="write-panel">
+            <div class="panel-header">
+              <svg viewBox="0 0 24 24" class="panel-icon"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 3c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm7 13H5v-.23c0-.62.28-1.2.76-1.58C7.47 15.82 9.64 15 12 15s4.53.82 6.24 2.19c.48.38.76.97.76 1.58V19z"/></svg>
+              <span>参考文章库</span>
+              <span class="badge-selected" id="ref-selected-badge"></span>
+            </div>
+            <div class="panel-body">
+              <!-- 新增文章区域 -->
+              <div class="ref-add-area" id="ref-add-area">
+                <div class="form-group">
+                  <label class="form-label">文章标题</label>
+                  <input type="text" class="form-input" id="ref-title" placeholder="给这篇文章起个名字（方便区分）" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">粘贴正文</label>
+                  <textarea class="form-textarea" id="ref-content" rows="8"
+                    placeholder="将参考文章正文粘贴到这里...&#10;&#10;支持微信公众号文章、博客、新闻稿等任意格式文字，字数不限。"></textarea>
+                  <div class="textarea-counter" id="ref-char-count">0 字</div>
+                </div>
+                <div class="btn-row">
+                  <button class="btn btn-primary" id="btn-save-ref" onclick="saveRefArticle()">
+                    <svg viewBox="0 0 24 24"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
+                    保存参考文章
+                  </button>
+                  <button class="btn btn-ghost" onclick="toggleRefAddArea()">收起</button>
+                </div>
+              </div>
+
+              <!-- 文章列表 -->
+              <div class="ref-list-header">
+                <span class="ref-list-title">已保存的参考文章</span>
+                <button class="btn btn-secondary btn-sm" onclick="toggleRefAddArea()">
+                  <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                  添加文章
+                </button>
+              </div>
+              <div id="ref-article-list" class="ref-article-list">
+                <div class="loading-state">加载中...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右列：仿写配置 + 结果 -->
+        <div class="imitate-right">
+
+          <!-- 仿写配置 -->
+          <div class="write-panel" id="imitate-config-panel">
+            <div class="panel-header">
+              <svg viewBox="0 0 24 24" class="panel-icon"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+              <span>仿写配置</span>
+            </div>
+            <div class="panel-body">
+              <div class="form-group">
+                <label class="form-label">本次想写的主题 <span class="required">*</span></label>
+                <input type="text" class="form-input" id="imitate-topic"
+                  placeholder="如：郑州地铁最新规划、河南高铁大事记..." />
+              </div>
+              <div class="form-group">
+                <label class="form-label">补充说明（可选）</label>
+                <input type="text" class="form-input" id="imitate-note"
+                  placeholder="如：字数1500字、侧重数据分析、结尾加互动引导..." />
+              </div>
+
+              <div class="imitate-hint" id="imitate-hint">
+                <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+                请先在左侧勾选 1~5 篇参考文章，AI 将学习它们的风格进行创作
+              </div>
+
+              <!-- 仿写进度 -->
+              <div id="imitate-progress-area" style="display:none">
+                <div class="write-steps">
+                  <div class="write-step" id="istep-1"><span class="wstep-icon">⏳</span><span>读取参考</span></div>
+                  <div class="write-step" id="istep-2"><span class="wstep-icon">⏳</span><span>分析风格</span></div>
+                  <div class="write-step" id="istep-3"><span class="wstep-icon">⏳</span><span>AI仿写</span></div>
+                  <div class="write-step" id="istep-4"><span class="wstep-icon">⏳</span><span>保存</span></div>
+                </div>
+                <div class="write-progress-msg" id="imitate-progress-msg"></div>
+              </div>
+
+              <button class="btn btn-primary btn-large w-full" id="btn-imitate" onclick="startImitate()" style="margin-top:1rem">
+                <svg viewBox="0 0 24 24"><path d="M9 11.75A1.25 1.25 0 1 0 9 14.25 1.25 1.25 0 0 0 9 11.75zm6 0a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5zM12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8 0-.29.02-.58.05-.86 2.36-1.05 4.23-2.98 5.21-5.37C11.07 8.33 14.05 10 17.42 10c.78 0 1.53-.09 2.25-.26.21.71.33 1.47.33 2.26 0 4.41-3.59 8-8 8z"/></svg>
+                开始仿写
+              </button>
+            </div>
+          </div>
+
+          <!-- 仿写结果 -->
+          <div class="write-panel" id="imitate-result" style="display:none">
+            <div class="panel-header">
+              <span class="step-badge step-badge-3">完成</span>
+              <span id="imitate-result-title">仿写结果</span>
+              <div class="result-actions">
+                <button class="btn btn-ghost btn-sm" onclick="copyImitateResult()">
+                  <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                  复制正文
+                </button>
+                <button class="btn btn-ghost btn-sm" onclick="resetImitate()">
+                  <svg viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                  重新仿写
+                </button>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="article-meta-bar">
+                <span id="imitate-wordcount"></span>
+                <span id="imitate-tags"></span>
+              </div>
+              <div class="ref-source-bar" id="imitate-ref-source"></div>
+              <div class="article-summary-box" id="imitate-summary" style="display:none"></div>
+              <div class="article-preview" id="imitate-content"></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

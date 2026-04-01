@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>写作方向说明补丁</title>
+    <style>
+        body {
+            width: 1920px;
+            height: 1080px;
+            background: #ffffff;
+            font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+            display: flex;
+            flex-direction: column;
+            padding: 60px 80px;
+            overflow: hidden;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 50px;
+            border-bottom: 3px solid #000;
+            padding-bottom: 25px;
+        }
+        
+        .title {
+            font-size: 56px;
+            font-weight: 900;
+            color: #000;
+            letter-spacing: 4px;
+        }
+        
+        .subtitle {
+            font-size: 22px;
+            color: #333;
+            margin-top: 12px;
+        }
+        
+        .content {
+            display: flex;
+            gap: 40px;
+            flex: 1;
+        }
+        
+        .left-section {
+            flex: 1;
+            background: #fff;
+            border: 3px solid #000;
+            border-radius: 12px;
+            padding: 30px;
+            overflow-y: auto;
+        }
+        
+        .right-section {
+            width: 400px;
+            background: #000;
+            color: #fff;
+            border-radius: 12px;
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .section-title {
+            font-size: 28px;
+            font-weight: 700;
+            color: #000;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #000;
+        }
+        
+        .right-section .section-title {
+            color: #fff;
+            border-color: #fff;
+        }
+        
+        .step {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #000;
+        }
+        
+        .step-number {
+            font-size: 20px;
+            font-weight: 700;
+            color: #000;
+            margin-bottom: 10px;
+        }
+        
+        .step-desc {
+            font-size: 16px;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .code {
+            background: #000;
+            color: #fff;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 14px;
+            margin: 15px 0;
+            overflow-x: auto;
+        }
+        
+        .arrow {
+            text-align: center;
+            font-size: 48px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="title">写作方向说明补丁</div>
+        <div class="subtitle">修复自定义写作方向后页面显示和滚动问题</div>
+    </div>
+    
+    <div class="content">
+        <div class="left-section">
+            <div class="section-title">问题分析</div>
+            
+            <div class="step">
+                <div class="step-number">01 现象描述</div>
+                <div class="step-desc">
+                    点击"自定义写作方向"后，下方的"写作方向说明"区域没有正常显示，且页面无法滚动。
+                </div>
+            </div>
+            
+            <div class="step">
+                <div class="step-number">02 根本原因</div>
+                <div class="step-desc">
+                    CSS 中写作方向说明区域的 display 设置为 none，或者父容器的 overflow 设置不当导致无法滚动。
+                </div>
+            </div>
+            
+            <div class="step">
+                <div class="step-number">03 影响范围</div>
+                <div class="step-desc">
+                    - "写作方向说明"输入框无法使用<br>
+                    - 页面无法滚动到下方内容<br>
+                    - 用户无法自定义写作风格
+                </div>
+            </div>
+        </div>
+        
+        <div class="right-section">
+            <div class="section-title">修复方案</div>
+            
+            <div class="step">
+                <div class="step-number">步骤 1</div>
+                <div class="step-desc">修改 CSS 显示属性</div>
+                <div class="code">
+                    #写作方向说明 {
+                        display: block !important;
+                        visibility: visible !important;
+                    }
+                </div>
+            </div>
+            
+            <div class="step">
+                <div class="step-number">步骤 2</div>
+                <div class="step-desc">修复容器滚动</div>
+                <div class="code">
+                    .page-write-layout {
+                        overflow-y: auto !important;
+                        max-height: 100vh;
+                    }
+                </div>
+            </div>
+            
+            <div class="step">
+                <div class="step-number">步骤 3</div>
+                <div class="step-desc">检查事件监听</div>
+                <div class="code">
+                    // 确保点击"自定义写作方向"后触发
+                    customDirectionBtn.addEventListener('click', () => {
+                        customDirectionArea.style.display = 'block';
+                        window.scrollTo(0, customDirectionArea.offsetTop);
+                    });
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

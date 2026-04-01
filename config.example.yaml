@@ -1,0 +1,79 @@
+# 公众号自动化写作工具 - 配置文件示例
+# WeChat Auto Writer Configuration Example
+# 
+# 部署到 Vercel 时,请将这些密钥配置为环境变量
+
+# ==================== AI 模型配置 ====================
+ai:
+  provider: deepseek
+
+  deepseek:
+    api_key: "YOUR_DEEPSEEK_API_KEY"
+    api_base: "https://api.deepseek.com/v1"
+    model: "deepseek-chat"
+    temperature: 0.8
+    max_tokens: 8000
+
+  tongyi:
+    api_key: "YOUR_TONGYI_API_KEY"
+    api_base: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: "qwen-turbo"
+    temperature: 0.8
+    max_tokens: 8000
+
+  wenxin:
+    api_key: "YOUR_WENXIN_API_KEY"
+    secret_key: "YOUR_WENXIN_SECRET_KEY"
+    model: "ernie-bot-4"
+    temperature: 0.8
+    max_tokens: 4000
+
+  siliconflow:
+    api_key: "YOUR_SILICONFLOW_API_KEY"
+    api_base: "https://api.siliconflow.cn/v1"
+    model: "deepseek-ai/DeepSeek-V3"
+    image_model: "black-forest-labs/FLUX.1-schnell"
+    temperature: 0.8
+    max_tokens: 8000
+
+# ==================== Tavily 搜索 API 配置 ====================
+tavily:
+  api_key: "YOUR_TAVILY_API_KEY"
+
+# ==================== 新闻抓取配置 ====================
+scraper:
+  source: baidu
+  max_articles: 5
+  timeout: 15
+  delay: 2
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+# ==================== 文章改写配置 ====================
+rewrite:
+  style: professional
+  add_summary: true
+  add_ending: true
+  target_words: 1200
+
+# ==================== 排版配置 ====================
+format:
+  add_cover_placeholder: true
+  add_meta: true
+  add_tags: true
+  title_level: h1
+
+# ==================== 输出配置 ====================
+output:
+  directory: "./output"
+  filename_format: datetime
+  save_raw: false
+
+# ==================== 微信公众号配置 ====================
+weixin:
+  enabled: true
+  app_id: "YOUR_WEIXIN_APP_ID"
+  app_secret: "YOUR_WEIXIN_APP_SECRET"
+  author: "公众号"
+  default_thumb_media_id: ""
+  open_comment: true
+  publish_directly: false

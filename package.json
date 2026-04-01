@@ -1,0 +1,33 @@
+{
+  "name": "wechat-auto-writer",
+  "version": "3.0.4",
+  "description": "公众号自动化写作工具 - 从新闻聚合网站抓取内容并用AI改写排版",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "web": "node server.js",
+    "cli": "node src/main.js",
+    "run": "node src/main.js --interactive",
+    "fetch": "node src/main.js --mode fetch",
+    "write": "node src/main.js --mode write"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "chalk": "^4.1.2",
+    "cheerio": "^1.0.0",
+    "commander": "^11.0.0",
+    "dayjs": "^1.11.10",
+    "express": "^4.22.1",
+    "he": "^1.2.0",
+    "inquirer": "^8.2.6",
+    "js-yaml": "^4.1.0",
+    "openai": "^4.20.0",
+    "ora": "^5.4.1",
+    "turndown": "^7.1.2",
+    "user-agents": "^1.1.239"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

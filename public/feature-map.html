@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>微信公众号自动写作助手 · 功能逻辑图</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+    background: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 40px;
+  }
+
+  .chart {
+    width: 1200px;
+  }
+
+  /* ── 标题 ── */
+  .chart-title {
+    text-align: center;
+    margin-bottom: 48px;
+  }
+  .chart-title h1 {
+    font-size: 28px;
+    font-weight: 700;
+    color: #1a2630;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+  .chart-title p {
+    font-size: 14px;
+    color: #8fa8b0;
+    letter-spacing: 2px;
+  }
+
+  /* ── 主流程横向 ── */
+  .flow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    margin-bottom: 48px;
+  }
+
+  .flow-node {
+    width: 140px;
+    background: #148085;
+    border-radius: 12px;
+    padding: 18px 12px;
+    text-align: center;
+    color: white;
+    flex-shrink: 0;
+  }
+  .flow-node .num {
+    font-size: 11px;
+    opacity: 0.7;
+    margin-bottom: 4px;
+    letter-spacing: 1px;
+  }
+  .flow-node .name {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .flow-node .sub {
+    font-size: 11px;
+    opacity: 0.75;
+    line-height: 1.5;
+  }
+
+  .flow-arrow {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    min-width: 40px;
+  }
+  .flow-arrow::before {
+    content: '';
+    position: absolute;
+    left: 0; right: 14px; top: 50%;
+    height: 2px;
+    background: #4db4b9;
+    transform: translateY(-50%);
+  }
+  .flow-arrow::after {
+    content: '';
+    position: absolute;
+    right: 0; top: 50%;
+    transform: translateY(-50%);
+    width: 0; height: 0;
+    border-top: 7px solid transparent;
+    border-bottom: 7px solid transparent;
+    border-left: 12px solid #4db4b9;
+  }
+
+  /* ── 第二层：功能模块 ── */
+  .modules {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    margin-bottom: 40px;
+  }
+
+  .module-group {
+    border: 2px solid #e8f6f7;
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .module-group-header {
+    background: #148085;
+    color: white;
+    text-align: center;
+    padding: 10px;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+  .module-group-header.amber  { background: #f0a500; }
+  .module-group-header.violet { background: #6c63ff; }
+  .module-group-header.green  { background: #10b981; }
+
+  .module-items {
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: #f8fbfc;
+  }
+  .module-item {
+    background: white;
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 13px;
+    color: #2c3e50;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid #eef4f5;
+  }
+  .module-item .icon { font-size: 15px; flex-shrink: 0; }
+  .module-item .text { line-height: 1.4; }
+  .module-item .text .label { font-weight: 600; font-size: 13px; }
+  .module-item .text .desc  { font-size: 11px; color: #8fa8b0; margin-top: 1px; }
+
+  /* ── 连接线区域 ── */
+  .connector-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0;
+    margin-bottom: 40px;
+  }
+  .connector-line {
+    flex: 1;
+    height: 2px;
+    background: #d0eaec;
+  }
+  .connector-center {
+    width: 180px;
+    background: linear-gradient(135deg, #148085, #4db4b9);
+    color: white;
+    text-align: center;
+    border-radius: 24px;
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    box-shadow: 0 4px 16px rgba(20,128,133,0.25);
+    flex-shrink: 0;
+    position: relative;
+  }
+
+  /* ── 底部输出 ── */
+  .output-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+  .output-card {
+    border: 2px solid #e8f6f7;
+    border-radius: 14px;
+    overflow: hidden;
+    text-align: center;
+  }
+  .output-card-header {
+    background: #f0a500;
+    color: white;
+    padding: 10px;
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .output-card-header.green { background: #10b981; }
+  .output-card-header.slate { background: #475569; }
+  .output-card-body {
+    background: #fffdf5;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .output-card-body.green { background: #f0fdf8; }
+  .output-card-body.slate { background: #f7f8fa; }
+  .output-item {
+    font-size: 13px;
+    color: #2c3e50;
+    padding: 7px 12px;
+    background: white;
+    border-radius: 7px;
+    border: 1px solid #eef4f5;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    text-align: left;
+  }
+
+  /* ── 版本标注 ── */
+  .footer-note {
+    text-align: center;
+    margin-top: 36px;
+    font-size: 12px;
+    color: #b0c4cc;
+    letter-spacing: 1px;
+  }
+
+  /* 垂直连接箭头 */
+  .v-connector {
+    display: flex;
+    justify-content: center;
+    padding: 8px 0;
+  }
+  .v-line {
+    width: 2px;
+    height: 28px;
+    background: linear-gradient(180deg, #4db4b9, #148085);
+    position: relative;
+  }
+  .v-line::after {
+    content: '';
+    position: absolute;
+    bottom: -7px; left: -5px;
+    width: 0; height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 10px solid #148085;
+  }
+
+  /* 分组标签 */
+  .section-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: #8fa8b0;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    text-align: center;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .section-label::before,
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: #e0edf0;
+  }
+</style>
+</head>
+<body>
+<div class="chart">
+
+  <!-- 标题 -->
+  <div class="chart-title">
+    <h1>微信公众号自动写作助手</h1>
+    <p>功能逻辑图 · v3.0.4</p>
+  </div>
+
+  <!-- ① 核心工作流程 -->
+  <div class="section-label">核心工作流程</div>
+  <div class="flow">
+    <div class="flow-node">
+      <div class="num">STEP 01</div>
+      <div class="name">选题采集</div>
+      <div class="sub">热点 / 搜索<br>参考文章</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node">
+      <div class="num">STEP 02</div>
+      <div class="name">AI 写作</div>
+      <div class="sub">选风格 / 模型<br>流式生成全文</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node">
+      <div class="num">STEP 03</div>
+      <div class="name">编辑预览</div>
+      <div class="sub">实时预览<br>微信排版效果</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node">
+      <div class="num">STEP 04</div>
+      <div class="name">AI 配图</div>
+      <div class="sub">关键词分析<br>自动生成配图</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node">
+      <div class="num">STEP 05</div>
+      <div class="name">推送发布</div>
+      <div class="sub">上传草稿箱<br>公众号发布</div>
+    </div>
+  </div>
+
+  <!-- ② 功能模块 -->
+  <div class="section-label">功能模块</div>
+  <div class="modules">
+
+    <div class="module-group">
+      <div class="module-group-header">📡 信息采集</div>
+      <div class="module-items">
+        <div class="module-item">
+          <div class="icon">🔥</div>
+          <div class="text">
+            <div class="label">每日热点</div>
+            <div class="desc">河南本地 · 热度排名</div>
+          </div>
+        </div>
+        <div class="module-item">
+          <div class="icon">🌐</div>
+          <div class="text">
+            <div class="label">全网热点</div>
+            <div class="desc">Tavily 实时搜索</div>
+          </div>
+        </div>
+        <div class="module-item">
+          <div class="icon">🔍</div>
+          <div class="text">
+            <div class="label">关键词搜索</div>
+            <div class="desc">多源新闻 · 定制信源</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="module-group">
+      <div class="module-group-header violet">✍️ 内容创作</div>
+      <div class="module-items">
+        <div class="module-item">
+          <div class="icon">📝</div>
+          <div class="text">
+            <div class="label">生成文章</div>
+            <div class="desc">AI 智能写作 · 草稿自动保存</div>
+          </div>
+        </div>
+        <div class="module-item">
+          <div class="icon">🔄</div>
+          <div class="text">
+            <div class="label">参考仿写</div>
+            <div class="desc">风格迁移 · 链接导入</div>
+          </div>
+        </div>
+        <div class="module-item">
+          <div class="icon">📚</div>
+          <div class="text">
+            <div class="label">历史文章</div>
+            <div class="desc">文章管理 · 复用再编辑</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="module-group">
+      <div class="module-group-header amber">🎨 排版配图</div>
+      <div class="module-items">
+        <div class="module-item">
+          <div class="icon">👁️</div>
+          <div class="text">
+            <div class="label">微信预览</div>
+            <div class="desc">实时预览 · 5种风格模板</div>
+          </div>
+        </div>
+        <div class="module-item">
+          <div class="icon">🖼️</div>
+          <div class="text">
+            <div class="label">AI 配图</div>
+            <div class="desc">Kolors模型 · 按章节插入</div>
+          </div>
+        </div>
+        <div class="module-item">
+          <div class="icon">🎨</div>
+          <div class="text">
+            <div class="label">风格模板</div>
+            <div class="desc">蓝绿/橙/蓝/绿/黑白</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="module-group">
+      <div class="module-group-header green">⚙️ 系统管理</div>
+      <div class="module-items">
+        <div class="module-item">
+          <div class="icon">📊</div>
+          <div class="text">
+            <div class="label">仪表盘</div>
+            <div class="desc">数据概览 · 状态监控</div>
+          </div>
+        </div>
+        <div class="module-item">
+          <div class="icon">🎭</div>
+          <div class="text">
+            <div class="label">风格档案</div>
+            <div class="desc">AI 分析 · 多账号管理</div>
+          </div>
+        </div>
+        <div class="module-item">
+          <div class="icon">🔑</div>
+          <div class="text">
+            <div class="label">配置中心</div>
+            <div class="desc">API Key · 模型切换</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ③ 输出 -->
+  <div class="section-label">输出 &amp; 发布</div>
+  <div class="output-row">
+    <div class="output-card">
+      <div class="output-card-header">📤 微信推送</div>
+      <div class="output-card-body">
+        <div class="output-item">📥 推送草稿箱</div>
+        <div class="output-item">🖼️ 图片上传素材库</div>
+        <div class="output-item">🔑 Access Token 管理</div>
+      </div>
+    </div>
+    <div class="output-card">
+      <div class="output-card-header green">🤖 AI 能力</div>
+      <div class="output-card-body green">
+        <div class="output-item">💬 DeepSeek / Qwen 写作</div>
+        <div class="output-item">🎨 Kolors 图像生成</div>
+        <div class="output-item">🌐 Tavily 实时搜索</div>
+      </div>
+    </div>
+    <div class="output-card">
+      <div class="output-card-header slate">🗂️ 数据存储</div>
+      <div class="output-card-body slate">
+        <div class="output-item">💾 草稿本地缓存</div>
+        <div class="output-item">📁 参考文章分账号保存</div>
+        <div class="output-item">📈 风格档案持久化</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-note">Node.js + Express · SSE 流式输出 · 微信公众号 API · 硅基流动</div>
+
+</div>
+</body>
+</html>

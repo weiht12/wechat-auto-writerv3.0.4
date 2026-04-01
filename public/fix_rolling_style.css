@@ -1,0 +1,65 @@
+/**
+ * 开发者调试样式：解决自定义写作方向页面无法滚动的问题
+ * 请在浏览器控制台（F12）中执行这段代码
+ * 
+ * 问题：页面高度限制导致无法滚动
+ * 原因：.page-write-layout { height: 100vh; }
+ * 修复：移除高度限制，允许自适应内容
+ */
+
+// 1. 移除 .page-write-layout 的高度限制
+document.querySelectorAll('.page-write-layout').forEach(el => {
+    console.log('✅ 正在修复 .page-write-layout');
+    el.style.height = 'auto';
+    el.style.minHeight = '100vh';
+    el.style.overflowY = 'auto';
+});
+
+// 2. 确保 .write-col-main 允许滚动
+document.querySelectorAll('.write-col-main').forEach(el => {
+    console.log('✅ 正在修复 .write-col-main');
+    el.style.height = 'auto';
+    el.style.minHeight = '0';
+    el.style.overflowY = 'auto';
+    el.style.overflowX = 'hidden';
+    el.style.flex = '1';
+});
+
+// 3. 确保 .write-col-preview 允许滚动
+document.querySelectorAll('.write-col-preview').forEach(el => {
+    console.log('✅ 正在修复 .write-col-preview');
+    el.style.height = 'auto';
+    el.style.minHeight = '100vh';
+    el.style.overflowY = 'auto';
+    el.style.overflowX = 'hidden';
+    el.style.flexShrink = '0';
+});
+
+// 4. 检查并修复可能被隐藏的元素
+const hiddenElements = document.querySelectorAll('[style*="display: none"], .hidden, [hidden]');
+hiddenElements.forEach(el => {
+    console.log('⚠️ 发现隐藏元素:', el);
+    // 如果是写作方向相关的元素，显示它
+    if (el.textContent.includes('写作方向') || el.textContent.includes('写作说明')) {
+        el.style.display = 'block';
+        el.style.visibility = 'visible';
+        console.log('✅ 已修复隐藏的写作方向元素');
+    }
+});
+
+// 5. 验证修复结果
+setTimeout(() => {
+    const pageLayout = document.querySelector('.page-write-layout');
+    const writeColMain = document.querySelector('.write-col-main');
+    
+    if (pageLayout) {
+        console.log('🔍 page-write-layout 高度:', pageLayout.offsetHeight, '可滚动:', pageLayout.scrollHeight > pageLayout.offsetHeight);
+    }
+    
+    if (writeColMain) {
+        console.log('🔍 write-col-main 高度:', writeColMain.offsetHeight, '可滚动:', writeColMain.scrollHeight > writeColMain.offsetHeight);
+    }
+    
+    console.log('✅ 修复完成！页面现在应该可以正常滚动了');
+    alert('✅ 滚动样式已修复！\n\n请检查：\n1. 自定义写作方向区域是否可见\n2. 页面是否可以正常滚动\n3. 写作方向说明是否能完整查看');
+}, 500);

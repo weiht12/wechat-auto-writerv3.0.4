@@ -1,0 +1,1799 @@
+﻿'use strict';
+
+// ═══════════════════════════════════════════════════════
+// 公众号 · 写作助手 — 前端交互逻辑
+// ═══════════════════════════════════════════════════════
+
+// ── 全局状态 ────────────────────────────────────────────
+const state = {
+  currentPage:     'dashboard',
+  statusData:      null,
+  hotTopicsData:   null,
+  todayTopics:     null,
+  fetchedArticles: [],
+  selectedArticles:[],
+  profileData:     null,
+  pendingKeyword:  null,
+};
+
+// ── 初始化 ──────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  initToast();
+  loadStatus();
+  checkAIStatus();
+  renderCustomSourceChips(); // 加载自定义消息源
+
+  // 事件委托：处理所有带 data-page 的导航点击
+  document.addEventListener('click', (e) => {
+    const target = e.target.closest('[data-page]');
+    if (target) {
+      e.preventDefault();
+      navigate(target.dataset.page);
+    }
+  });
+
+  // 关键词输入框支持回车搜索
+  const kwInput = document.getElementById('kw-input');
+  if (kwInput) {
+    kwInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') fetchNews();
+    });
+  }
+});
+
+// ════════════════════════════════════════════════════════
+// 导航
+// ════════════════════════════════════════════════════════
+function navigate(page) {
+  // 更新导航高亮
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.page === page);
+  });
+
+  // 切换页面显示
+  document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
+  const pageEl = document.getElementById('page-' + page);
+  if (pageEl) pageEl.classList.add('active');
+
+  state.currentPage = page;
+
+  // 懒加载各页面数据
+  if (page === 'hot')     loadHotTopics();
+  if (page === 'profile') loadProfile();
+  if (page === 'history') loadHistory();
+  if (page === 'imitate') loadImitate();
+  if (page === 'write' && state.pendingKeyword) {
+    const kw = document.getElementById('kw-input');
+    if (kw) kw.value = state.pendingKeyword;
+    state.pendingKeyword = null;
+    fetchNews();
+  }
+}
+
+// ════════════════════════════════════════════════════════
+// 仪表盘：加载状态
+// ════════════════════════════════════════════════════════
+async function loadStatus() {
+  try {
+    const data = await fetchJSON('/api/status');
+    state.statusData = data;
+
+    // 风格档案
+    const profile = data.profile;
+    document.getElementById('stat-profile').textContent =
+      profile ? '已建立' : '未建立';
+    document.getElementById('stat-profile-meta').textContent = profile
+      ? profile.sample_count + ' 篇样本 · ' + (profile.analyzed_at || '').substring(0, 10)
+      : '请导入文章后分析';
+
+    // 文章库
+    const articles = data.articles;
+    document.getElementById('stat-articles').textContent =
+      articles ? articles.total + ' 篇' : '0 篇';
+    document.getElementById('stat-articles-meta').textContent = articles
+      ? '同步于 ' + (articles.synced_at || '').substring(0, 10)
+      : '尚未导入';
+
+    // 生成文章
+    document.getElementById('stat-output').textContent =
+      (data.output ? data.output.length : 0) + ' 篇';
+    document.getElementById('stat-output-meta').textContent =
+      data.output && data.output.length
+        ? '最新：' + (data.output[0].mtime || '').substring(0, 10)
+        : '暂无';
+
+    // 热点缓存
+    const hot = data.hotCache;
+    document.getElementById('stat-hot').textContent =
+      hot ? hot.count + ' 条' : '无缓存';
+    document.getElementById('stat-hot-meta').textContent = hot
+      ? '生成于 ' + (hot.generated_at || '').substring(11, 16)
+      : '点击「每日热点」获取';
+
+    // 更新热点角标
+    if (hot) {
+      const badge = document.getElementById('badge-hot');
+      if (badge) badge.textContent = hot.count;
+    }
+
+    // 渲染最近文章
+    renderRecentArticles(data.output || []);
+  } catch (err) {
+    console.error('loadStatus failed', err);
+  }
+}
+
+function renderRecentArticles(files) {
+  const el = document.getElementById('recent-articles');
+  if (!el) return;
+  if (!files.length) {
+    el.innerHTML = '<div class="empty-state">暂无已生成文章，去「生成文章」页面创作吧</div>';
+    return;
+  }
+  el.innerHTML = files.slice(0, 8).map(f => `
+    <div class="article-item" onclick="openArticleFromHistory('${f.name}')">
+      <div class="article-item-icon">📄</div>
+      <div class="article-item-body">
+        <div class="article-item-title">${escHtml(f.title)}</div>
+        <div class="article-item-meta">${(f.mtime || '').substring(0, 16).replace('T', ' ')} · ${formatSize(f.size)}</div>
+      </div>
+      <div class="article-item-arrow">›</div>
+    </div>
+  `).join('');
+}
+
+// ════════════════════════════════════════════════════════
+// 每日热点
+// ════════════════════════════════════════════════════════
+let hotLoaded = false;
+
+async function loadHotTopics(forceRefresh = false) {
+  if (hotLoaded && !forceRefresh) return;
+  hotLoaded = false;
+
+  const progressEl = document.getElementById('hot-progress');
+  const progressMsg = document.getElementById('hot-progress-msg');
+  const topicsEl   = document.getElementById('hot-topics-list');
+  const sourceBar  = document.getElementById('source-bar');
+  const refreshBtn = document.getElementById('btn-refresh');
+
+  if (progressEl) progressEl.style.display = 'block';
+  if (progressMsg) progressMsg.textContent = '正在连接数据源...';
+  if (topicsEl) topicsEl.innerHTML = '';
+  if (sourceBar) sourceBar.style.display = 'flex';
+  if (refreshBtn) refreshBtn.disabled = true;
+
+  const dateDesc = document.getElementById('hot-date-desc');
+  if (dateDesc) {
+    dateDesc.textContent = '今日 ' + new Date().toLocaleDateString('zh-CN', {
+      month: 'long', day: 'numeric', weekday: 'long'
+    }) + ' · 河南热点实时监控';
+  }
+
+  const customSources = loadCustomSources();
+  let url = '/api/hot-topics' + (forceRefresh ? '?refresh=1' : '?');
+  if (customSources.length > 0) {
+    const sep = forceRefresh ? '&' : '';
+    url += sep + 'custom=' + encodeURIComponent(JSON.stringify(customSources));
+  }
+  const evtSrc = new EventSource(url);
+
+  evtSrc.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+
+    if (msg.type === 'cached') {
+      if (progressMsg) progressMsg.textContent = '使用今日缓存（生成于 ' + (msg.generated_at || '').substring(11, 16) + '）';
+      if (msg.site_stats) updateSourceBar(msg.site_stats);
+    }
+    if (msg.type === 'progress') {
+      if (progressMsg) progressMsg.textContent = msg.msg;
+    }
+    if (msg.type === 'stats') {
+      updateSourceBar(msg.site_stats);
+      if (progressMsg) progressMsg.textContent = '已抓取 ' + msg.total + ' 条资讯，AI 正在提炼热点话题...';
+    }
+    if (msg.type === 'topics' || msg.__done) {
+      if (msg.error) {
+        if (progressEl) progressEl.style.display = 'none';
+        if (progressMsg) progressMsg.textContent = '';
+        if (topicsEl) topicsEl.innerHTML = '<div class="empty-state" style="color:#f87171">⚠️ ' + escHtml(msg.error) + '</div>';
+        showToast(msg.error, 'error');
+        if (refreshBtn) refreshBtn.disabled = false;
+        evtSrc.close();
+        return;
+      }
+      if (msg.topics) {
+        state.hotTopicsData = msg.topics;
+        if (msg.site_stats) updateSourceBar(msg.site_stats);
+        renderHotTopics(msg.topics);
+        if (progressEl) progressEl.style.display = 'none';
+        if (progressMsg) progressMsg.textContent = '';
+        hotLoaded = true;
+        const badge = document.getElementById('badge-hot');
+        if (badge) badge.textContent = msg.topics.length;
+      }
+      if (refreshBtn) refreshBtn.disabled = false;
+      evtSrc.close();
+    }
+  };
+
+  evtSrc.onerror = () => {
+    if (progressEl) progressEl.style.display = 'none';
+    if (progressMsg) progressMsg.textContent = '';
+    if (topicsEl) topicsEl.innerHTML = '<div class="empty-state" style="color:#f87171">连接服务器失败，请刷新页面</div>';
+    if (refreshBtn) refreshBtn.disabled = false;
+    evtSrc.close();
+  };
+}
+
+function updateSourceBar(stats) {
+  // 更新内置消息源 chip
+  const builtinMap = { '大河财立方': 'dahecube', '河南省政府': 'gov', '百度新闻': 'baidu' };
+  for (const [label, id] of Object.entries(builtinMap)) {
+    const dot = document.getElementById('src-dot-' + id);
+    const cnt = document.getElementById('src-count-' + id);
+    const count = stats[label] != null ? stats[label] : -1;
+    if (dot) dot.className = 'source-chip-dot ' + (count > 0 ? 'ok' : 'err');
+    if (cnt) cnt.textContent = count >= 0 ? ' ' + count + '条' : ' 失败';
+  }
+  // 更新自定义消息源 chip
+  const customSources = loadCustomSources();
+  customSources.forEach((s, i) => {
+    const dot = document.getElementById('src-dot-custom-' + i);
+    const count = stats[s.name] != null ? stats[s.name] : -1;
+    if (dot) dot.className = 'source-chip-dot ' + (count > 0 ? 'ok' : (count === 0 ? 'err' : ''));
+  });
+}
+
+function updateSearchSourceBar(stats) {
+  const searchMap = { '百度新闻': 'search-baidu', '必应': 'search-bing', 'Google': 'search-google' };
+  for (const [label, id] of Object.entries(searchMap)) {
+    const el = document.getElementById('src-' + id);
+    if (!el) continue;
+    const count = stats[label] != null ? stats[label] : -1;
+    const dot = el.querySelector('.source-dot');
+    const cnt = el.querySelector('.source-count');
+    if (dot) dot.className = 'source-dot ' + (count > 0 ? 'ok' : 'err');
+    if (cnt) cnt.textContent = count >= 0 ? count + '条' : '失败';
+  }
+}
+
+function renderHotTopics(topics) {
+  const el = document.getElementById('hot-topics-list');
+  if (!el) return;
+  if (!topics || !topics.length) {
+    el.innerHTML = '<div class="empty-state">暂无热点数据</div>';
+    return;
+  }
+  state.todayTopics = topics;
+  el.innerHTML = topics.map(t => {
+    const rankClass = t.no <= 5 ? ' rank-' + t.no : '';
+    const sourceHtml = t.source ? '<span class="topic-source">' + escHtml(t.source) + '</span>' : '';
+    const timeHtml = t.time ? '<span style="font-size:11px;color:var(--text-muted)">' + escHtml(t.time) + '</span>' : '';
+    const angleHtml = t.angle ? '<div class="topic-angle">' + escHtml(t.angle) + '</div>' : '';
+    return `
+    <div class="topic-card">
+      <div class="topic-num${rankClass}">${t.no}</div>
+      <div class="topic-body">
+        <div class="topic-title">${escHtml(t.title)}</div>
+        ${angleHtml}
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-top:6px">
+          ${sourceHtml}${timeHtml}
+        </div>
+      </div>
+      <div class="topic-action">
+        <button class="btn btn-secondary btn-sm" onclick="useTopicForWrite(${t.no - 1})">
+          <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+          写这篇
+        </button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function useTopicForWrite(index) {
+  const topics = state.hotTopicsData;
+  if (!topics || !topics[index]) return;
+  state.pendingKeyword = topics[index].title;
+  navigate('write');
+}
+
+// ── 本地热点关键词搜索 ──────────────────────────────────
+function searchLocalHotTopics() {
+  const keyword = document.getElementById('local-hot-keyword').value.trim();
+  if (!keyword) {
+    showToast('请输入搜索关键词');
+    document.getElementById('local-hot-keyword').focus();
+    return;
+  }
+  const progressEl = document.getElementById('local-search-progress');
+  const msgEl      = document.getElementById('local-search-msg');
+  const btn        = document.getElementById('btn-local-search');
+  const listEl     = document.getElementById('hot-topics-list');
+  const sourceBar  = document.getElementById('search-source-bar');
+
+  if (progressEl) progressEl.style.display = 'block';
+  if (msgEl) msgEl.textContent = '正在搜索「' + keyword + '」...';
+  if (btn) { btn.disabled = true; btn.textContent = '搜索中...'; }
+  if (listEl) listEl.innerHTML = '';
+  if (sourceBar) sourceBar.style.display = 'flex';
+
+  updateSearchSourceBar({ '百度新闻': 0, '必应': 0, 'Google': 0 });
+
+  const evtSrc = new EventSource('/api/hot-topics-search?keyword=' + encodeURIComponent(keyword));
+  evtSrc.onmessage = function(e) {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'progress' || msg.type === 'cached') {
+      if (msgEl) msgEl.textContent = msg.msg || '';
+    }
+    if (msg.type === 'search_topics' || msg.__done) {
+      evtSrc.close();
+      if (progressEl) progressEl.style.display = 'none';
+      if (btn) { btn.disabled = false; btn.textContent = '搜索'; }
+      if (msg.error) {
+        if (listEl) listEl.innerHTML = '<div class="empty-state">⚠️ ' + escHtml(msg.error) + '</div>';
+        return;
+      }
+      if (msg.topics && msg.topics.length > 0) {
+        renderSearchTopics(msg.topics, keyword);
+        showToast('找到 ' + msg.topics.length + ' 个「' + keyword + '」相关选题');
+      } else {
+        if (listEl) listEl.innerHTML = '<div class="empty-state">未找到「' + escHtml(keyword) + '」的相关选题，请换个关键词试试</div>';
+      }
+    }
+  };
+  evtSrc.onerror = () => {
+    evtSrc.close();
+    if (progressEl) progressEl.style.display = 'none';
+    if (btn) { btn.disabled = false; btn.textContent = '搜索'; }
+    if (listEl) listEl.innerHTML = '<div class="empty-state">⚠️ 搜索失败，请稍后重试</div>';
+  };
+}
+
+function renderSearchTopics(topics, keyword) {
+  const el = document.getElementById('hot-topics-list');
+  if (!el) return;
+  const header = `
+    <div class="search-result-header">
+      <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+      「${escHtml(keyword)}」搜索结果
+      <button class="btn btn-ghost btn-sm" onclick="restoreHotTopics()" style="margin-left:auto">← 返回今日热点</button>
+    </div>`;
+  el.innerHTML = header + topics.map(t => `
+    <div class="topic-card topic-card-search">
+      <div class="topic-num">${t.no}</div>
+      <div class="topic-body">
+        <div class="topic-title">${escHtml(t.title)}</div>
+        ${t.angle ? '<div class="topic-angle">📌 ' + escHtml(t.angle) + '</div>' : ''}
+        ${t.source ? '<span class="topic-source">' + escHtml(t.source) + '</span>' : ''}
+      </div>
+      <div class="topic-action">
+        <button class="btn btn-secondary btn-sm" onclick="useSearchTopicForWrite('${escHtml(t.title).replace(/'/g, "\\'")}')">
+          <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+          写这篇
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function useSearchTopicForWrite(title) {
+  state.pendingKeyword = title;
+  navigate('write');
+}
+
+function restoreHotTopics() {
+  document.getElementById('local-hot-keyword').value = '';
+  if (state.todayTopics) {
+    renderHotTopics(state.todayTopics);
+  } else {
+    loadHotTopics();
+  }
+}
+
+// ════════════════════════════════════════════════════════
+// 生成文章
+// ════════════════════════════════════════════════════════
+async function fetchNews() {
+  const keyword = document.getElementById('kw-input').value.trim();
+  if (!keyword) { showToast('请输入搜索关键词', 'error'); return; }
+
+  const count      = parseInt(document.getElementById('count-select').value, 10);
+  const useTavily  = document.getElementById('tavily-enabled') ? document.getElementById('tavily-enabled').checked : false;
+  const btn        = document.getElementById('btn-fetch');
+  const newsEl     = document.getElementById('news-list');
+  const step2      = document.getElementById('write-step2');
+
+  setLoading(btn, true, '搜索中...');
+  if (newsEl) { newsEl.style.display = 'none'; newsEl.innerHTML = ''; }
+  if (step2) step2.style.display = 'none';
+
+  try {
+    const data = await fetchJSON('/api/fetch-news', { method: 'POST', body: { keyword, count, useTavily } });
+    state.fetchedArticles = data.articles || [];
+    if (!state.fetchedArticles.length) {
+      showToast('未找到相关新闻，请更换关键词', 'error');
+      return;
+    }
+
+    if (newsEl) {
+      newsEl.innerHTML = state.fetchedArticles.map((a, i) => `
+        <div class="news-item checked" id="news-${i}" onclick="toggleNews(${i})">
+          <input type="checkbox" id="chk-${i}" ${i < count ? 'checked' : ''} onclick="event.stopPropagation();toggleNews(${i})" />
+          <div class="news-item-title">${escHtml(a.title)}</div>
+          <div class="news-item-source">${escHtml(a.source || '')}</div>
+        </div>
+      `).join('');
+    }
+
+    state.selectedArticles = state.fetchedArticles.slice(0, count).map((_, i) => i);
+    state.fetchedArticles.forEach((_, i) => {
+      if (i >= count) {
+        const ni = document.getElementById('news-' + i);
+        if (ni) ni.classList.remove('checked');
+      }
+    });
+
+    updateSelectedBadge();
+    if (newsEl) newsEl.style.display = 'block';
+    if (step2) step2.style.display = 'block';
+  } catch (err) {
+    showToast('搜索失败：' + err.message, 'error');
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+function toggleNews(index) {
+  const item = document.getElementById('news-' + index);
+  const chk  = document.getElementById('chk-' + index);
+  if (!chk) return;
+  const isChecked = !chk.checked;
+  chk.checked = isChecked;
+  if (item) item.classList.toggle('checked', isChecked);
+  if (isChecked) {
+    if (!state.selectedArticles.includes(index)) state.selectedArticles.push(index);
+  } else {
+    state.selectedArticles = state.selectedArticles.filter(i => i !== index);
+  }
+  updateSelectedBadge();
+}
+
+function updateSelectedBadge() {
+  const badge = document.getElementById('selected-count-badge');
+  if (!badge) return;
+  const n = state.selectedArticles.length;
+  badge.textContent = n ? '已选 ' + n + ' 篇' : '';
+}
+
+function switchWriteMode(mode) {
+  const form         = document.getElementById('custom-direction-form');
+  const defaultLabel = document.getElementById('mode-default');
+  const customLabel  = document.getElementById('mode-custom');
+  if (mode === 'custom') {
+    if (form) form.style.display = 'block';
+    if (defaultLabel) defaultLabel.classList.remove('active');
+    if (customLabel) customLabel.classList.add('active');
+  } else {
+    if (form) form.style.display = 'none';
+    if (defaultLabel) defaultLabel.classList.add('active');
+    if (customLabel) customLabel.classList.remove('active');
+  }
+}
+
+async function writeArticle() {
+  if (!state.selectedArticles.length && !state.fetchedArticles.length) {
+    showToast('请先搜索并选择新闻', 'error');
+    return;
+  }
+  const keyword   = document.getElementById('kw-input').value.trim();
+  const btn       = document.getElementById('btn-write');
+  const progArea  = document.getElementById('write-progress-area');
+  const progMsg   = document.getElementById('write-progress-msg');
+  const resultEl  = document.getElementById('write-result');
+
+  const writeModeEl = document.querySelector('input[name="write-mode"]:checked');
+  const writeMode   = writeModeEl ? writeModeEl.value : 'default';
+  const customDirection = document.getElementById('custom-direction') ? document.getElementById('custom-direction').value.trim() : '';
+  const customOutline   = document.getElementById('custom-outline') ? document.getElementById('custom-outline').value.trim() : '';
+  const useDeepResearch = document.getElementById('deep-research-enabled') ? document.getElementById('deep-research-enabled').checked : false;
+  const useStyleProfile = document.getElementById('style-profile-enabled') ? document.getElementById('style-profile-enabled').checked : true;
+
+  setLoading(btn, true, 'AI 生成中...');
+  if (progArea) progArea.style.display = 'block';
+  if (resultEl) resultEl.style.display = 'none';
+
+  const articles = state.selectedArticles.map(i => state.fetchedArticles[i]).filter(Boolean);
+  setWriteStep(1, 'active');
+  if (progMsg) progMsg.textContent = '准备就绪，AI 开始改写...';
+
+  try {
+    const resp = await fetch('/api/write', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        keyword, articles, writeMode,
+        customDirection: writeMode === 'custom' ? customDirection : undefined,
+        customOutline:   writeMode === 'custom' ? customOutline : undefined,
+        useDeepResearch, useStyleProfile,
+      }),
+    });
+    if (!resp.ok) throw new Error('服务器错误 ' + resp.status);
+    if (!resp.body) throw new Error('浏览器不支持流式读取');
+
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let   buffer  = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const msg = JSON.parse(line.slice(5).trim());
+        if (msg.type === 'progress') {
+          if (progMsg) progMsg.textContent = msg.msg;
+          if (msg.step === 1) setWriteStep(1, 'active');
+          if (msg.step === 2) { setWriteStep(1, 'done'); setWriteStep(2, 'active'); }
+          if (msg.step === 3) { setWriteStep(2, 'done'); setWriteStep(3, 'active'); }
+          if (msg.step === 4) { setWriteStep(3, 'done'); setWriteStep(4, 'active'); }
+        }
+        if (msg.__done) {
+          if (msg.error) {
+            showToast('生成失败：' + msg.error, 'error');
+            setWriteStep(1, '');
+          } else {
+            setWriteStep(3, 'done');
+            if (msg.wxResult && !msg.wxResult.error) setWriteStep(4, 'done');
+            renderArticleResult(msg);
+            if (progMsg) progMsg.textContent = '✓ 生成完成！';
+            loadStatus();
+          }
+        }
+      }
+    }
+  } catch (err) {
+    showToast('生成失败：' + err.message, 'error');
+    if (progMsg) progMsg.textContent = '⚠️ 生成失败：' + err.message;
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+function setWriteStep(num, st) {
+  const el = document.getElementById('wstep-' + num);
+  if (!el) return;
+  el.className = 'write-step' + (st ? ' ' + st : '');
+  const icon = el.querySelector('.wstep-icon');
+  if (!icon) return;
+  icon.textContent = st === 'active' ? '⚙️' : st === 'done' ? '✅' : '⏳';
+}
+
+function renderArticleResult(data) {
+  const titleEl = document.getElementById('result-title-header');
+  if (titleEl) titleEl.textContent = data.title || '文章已生成';
+  const resultEl = document.getElementById('write-result');
+  if (resultEl) resultEl.style.display = 'block';
+
+  const wcEl = document.getElementById('result-wordcount');
+  if (wcEl) wcEl.textContent = '约 ' + (data.wordCount || 0) + ' 字';
+
+  const tagsEl = document.getElementById('result-tags');
+  if (tagsEl) tagsEl.innerHTML = (data.tags || []).map(t => '<span class="tag-chip">' + escHtml(t) + '</span>').join('');
+
+  const wxEl = document.getElementById('result-wx-status');
+  if (wxEl) {
+    if (data.wxResult && !data.wxResult.error) {
+      wxEl.textContent = '✅ 已推送草稿箱';
+      wxEl.style.color = '#34d399';
+    } else if (data.wxResult && data.wxResult.error) {
+      wxEl.textContent = '⚠️ 草稿推送失败：' + data.wxResult.error;
+      wxEl.style.color = '#f87171';
+    } else {
+      wxEl.textContent = '';
+    }
+  }
+
+  const summaryEl = document.getElementById('result-summary');
+  if (summaryEl) {
+    summaryEl.style.display = data.summary ? 'block' : 'none';
+    if (data.summary) summaryEl.textContent = data.summary;
+  }
+
+  const contentEl = document.getElementById('result-content');
+  if (contentEl) {
+    const rawMd = data.content || '';
+    let html = typeof marked !== 'undefined' ? marked.parse(rawMd) : rawMd.replace(/\n/g, '<br>');
+    html = formatSectionHeadings(html);
+    contentEl.innerHTML = html;
+  }
+
+  if (resultEl) resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  // 更新微信排版预览
+  updateWxPreview(data.title || '未命名文章', data.content || '');
+}
+
+function copyArticle() {
+  const content = document.getElementById('result-content').innerText;
+  navigator.clipboard.writeText(content)
+    .then(() => showToast('正文已复制到剪贴板', 'success'))
+    .catch(() => showToast('复制失败，请手动选择复制', 'error'));
+}
+
+function writeAgain() {
+  const wr = document.getElementById('write-result');
+  const pa = document.getElementById('write-progress-area');
+  const s2 = document.getElementById('write-step2');
+  if (wr) wr.style.display = 'none';
+  if (pa) pa.style.display = 'none';
+  if (s2) s2.style.display = 'block';
+  // 还原微信预览为空白状态
+  const headerEl  = document.getElementById('wx-side-header');
+  const bodyEl    = document.getElementById('wx-preview-body');
+  const actionsEl = document.getElementById('wx-side-actions');
+  const emptyEl   = document.getElementById('wx-empty-placeholder');
+  if (headerEl)  headerEl.style.display  = 'none';
+  if (actionsEl) actionsEl.style.display = 'none';
+  if (bodyEl && emptyEl) {
+    bodyEl.innerHTML = emptyEl.outerHTML;
+    document.getElementById('wx-empty-placeholder').style.display = '';
+  }
+  [1, 2, 3, 4].forEach(n => setWriteStep(n, ''));
+}
+
+// ════════════════════════════════════════════════════════
+// 文章排版格式化
+// ════════════════════════════════════════════════════════
+function formatSectionHeadings(html) {
+  let sectionCount = 0;
+  return html.replace(/<h2[^>]*>(.*?)<\/h2>/gi, (match, content) => {
+    sectionCount++;
+    const num = sectionCount.toString().padStart(2, '0');
+    return '<div class="section-header"><span class="section-number">' + num + '</span><h2>' + content + '</h2></div>';
+  });
+}
+
+// ════════════════════════════════════════════════════════
+// 风格档案（多账号版）
+// ════════════════════════════════════════════════════════
+const profilesState = {
+  list:       [],
+  activeId:   'yushtang',
+  activeData: null,
+};
+
+async function loadProfile() {
+  const el = document.getElementById('profile-content');
+  if (el) el.innerHTML = '<div class="loading-state">加载中...</div>';
+  try {
+    const data = await fetchJSON('/api/profiles');
+    profilesState.list = data.profiles || [];
+    renderProfilesTabs();
+    await loadProfileDetail(profilesState.activeId);
+  } catch (err) {
+    if (el) el.innerHTML = '<div class="empty-state">加载失败：' + escHtml(err.message) + '</div>';
+  }
+}
+
+function renderProfilesTabs() {
+  const tabsEl = document.getElementById('profiles-tabs');
+  if (!tabsEl) return;
+  tabsEl.innerHTML = profilesState.list.map(p => `
+    <button class="profile-tab ${p.id === profilesState.activeId ? 'active' : ''}"
+      onclick="switchProfileTab('${escHtml(p.id)}')">
+      <span>${escHtml(p.icon || '📝')}</span>
+      <span>${escHtml(p.name)}</span>
+      ${p.sample_count ? '<span class="profile-tab-badge">' + p.sample_count + '篇</span>' : ''}
+    </button>
+  `).join('');
+}
+
+async function switchProfileTab(id) {
+  profilesState.activeId = id;
+  renderProfilesTabs();
+  await loadProfileDetail(id);
+}
+
+async function loadProfileDetail(id) {
+  const el = document.getElementById('profile-content');
+  if (el) el.innerHTML = '<div class="loading-state">加载中...</div>';
+  try {
+    const p = await fetchJSON('/api/profiles/' + id);
+    profilesState.activeData = p;
+    renderProfile(p);
+  } catch (err) {
+    if (el) {
+      el.innerHTML = `
+        <div class="profile-empty-state">
+          <div class="profile-empty-icon">📝</div>
+          <div class="profile-empty-text">此档案尚未建立风格数据</div>
+          <div class="profile-empty-hint">请导入该公众号的历史文章，AI 将自动学习并建立风格档案</div>
+          <button class="btn btn-primary" onclick="showImportSamplesPanel('${escHtml(id)}')">
+            导入文章样本
+          </button>
+        </div>
+      `;
+    }
+  }
+}
+
+function renderProfile(p) {
+  const el = document.getElementById('profile-content');
+  if (!el) return;
+
+  const isDefault = p._profileId === 'yushtang';
+  const canDelete = !isDefault;
+
+  el.innerHTML = `
+    <div class="profile-detail-header">
+      <div class="profile-detail-meta">
+        <span class="profile-detail-icon">${escHtml(p._profileIcon || '📝')}</span>
+        <div>
+          <div class="profile-detail-name">${escHtml(p._profileName || p._profileId || '')}</div>
+          <div class="profile-detail-desc">${escHtml(p._profileDescription || '')}</div>
+        </div>
+      </div>
+      <div class="profile-detail-actions">
+        <button class="btn btn-secondary btn-sm" onclick="showImportSamplesPanel('${escHtml(p._profileId)}')">
+          <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
+          导入文章 / 迭代学习
+        </button>
+        ${canDelete ? `<button class="btn btn-ghost btn-sm" style="color:#f87171" onclick="deleteProfile('${escHtml(p._profileId)}', '${escHtml(p._profileName || '')}')">删除档案</button>` : ''}
+      </div>
+    </div>
+
+    <!-- 导入面板（默认折叠）-->
+    <div class="import-samples-panel" id="import-samples-panel-${escHtml(p._profileId)}" style="display:none">
+      <div class="panel-body" style="background:#f8fafc;border-radius:12px;padding:1.25rem;margin-bottom:1.5rem;border:1px solid #e2e8f0">
+        <div class="form-group">
+          <label class="form-label">粘贴文章正文（每篇文章之间用 "---" 分隔，或每次粘贴一篇）</label>
+          <textarea class="form-textarea" id="samples-textarea-${escHtml(p._profileId)}" rows="10"
+            placeholder="粘贴该公众号的历史文章正文...&#10;&#10;建议导入 5-15 篇最有代表性的文章，AI 会学习你的写作特征：用词习惯、句式风格、段落结构等。&#10;&#10;每篇文章之间用一行 --- 分隔即可。"></textarea>
+          <div style="display:flex;justify-content:space-between;margin-top:0.5rem">
+            <span style="font-size:0.8rem;color:#94a3b8" id="samples-count-${escHtml(p._profileId)}">0 字</span>
+            <label style="font-size:0.8rem;color:#94a3b8;cursor:pointer">
+              <input type="file" accept=".txt,.md" multiple style="display:none"
+                onchange="loadSamplesFromFiles(event, '${escHtml(p._profileId)}')">
+              📁 或上传 TXT 文件
+            </label>
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="analyzeSamples('${escHtml(p._profileId)}')">
+            <svg viewBox="0 0 24 24"><path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3zM5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82z"/></svg>
+            开始分析 / 迭代风格
+          </button>
+          <button class="btn btn-ghost" onclick="document.getElementById('import-samples-panel-${escHtml(p._profileId)}').style.display='none'">收起</button>
+        </div>
+        <div id="analyze-progress-${escHtml(p._profileId)}" style="display:none;margin-top:0.75rem">
+          <div class="write-progress-msg" id="analyze-msg-${escHtml(p._profileId)}"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="profile-grid">
+      <div class="profile-card profile-summary">
+        <div class="profile-card-title">风格总结</div>
+        <div class="profile-summary-text">${escHtml(p.summary || '尚未分析')}</div>
+      </div>
+      <div class="profile-card">
+        <div class="profile-card-title">语气特征</div>
+        <div class="profile-kv"><div class="profile-key">整体描述</div><div class="profile-val">${escHtml(p.tone && p.tone.description || '-')}</div></div>
+        <div class="profile-kv"><div class="profile-key">关键词</div><div class="chip-group">${((p.tone && p.tone.keywords) || []).map(k => '<span class="chip accent">' + escHtml(k) + '</span>').join('')}</div></div>
+        <div class="profile-kv"><div class="profile-key">正式程度</div><div class="profile-val">${escHtml(p.tone && p.tone.formality || '-')}</div></div>
+        <div class="profile-kv"><div class="profile-key">情感强度</div><div class="profile-val">${escHtml(p.tone && p.tone.emotion || '-')}</div></div>
+      </div>
+      <div class="profile-card">
+        <div class="profile-card-title">写作视角</div>
+        <div class="profile-kv"><div class="profile-key">叙述视角</div><div class="profile-val">${escHtml(p.perspective && p.perspective.viewpoint || '-')}</div></div>
+        <div class="profile-kv"><div class="profile-key">观点立场</div><div class="profile-val">${escHtml(p.perspective && p.perspective.stance || '-')}</div></div>
+        <div class="profile-kv"><div class="profile-key">文章类型</div><div class="profile-val">${escHtml(p.perspective && p.perspective.style || '-')}</div></div>
+      </div>
+      <div class="profile-card">
+        <div class="profile-card-title">文章结构</div>
+        <div class="profile-kv"><div class="profile-key">开篇方式</div><div class="profile-val">${escHtml(p.structure && p.structure.opening_style || '-')}</div></div>
+        <div class="profile-kv"><div class="profile-key">正文逻辑</div><div class="profile-val">${escHtml(p.structure && p.structure.body_logic || '-')}</div></div>
+        <div class="profile-kv"><div class="profile-key">结尾方式</div><div class="profile-val">${escHtml(p.structure && p.structure.closing_style || '-')}</div></div>
+        <div class="profile-kv"><div class="profile-key">段落长度</div><div class="profile-val">${escHtml(p.structure && p.structure.paragraph_length || '-')}</div></div>
+      </div>
+      <div class="profile-card">
+        <div class="profile-card-title">语言特征</div>
+        <div class="profile-kv"><div class="profile-key">词汇风格</div><div class="profile-val">${escHtml(p.language && p.language.vocabulary_level || '-')}</div></div>
+        <div class="profile-kv"><div class="profile-key">句子长度</div><div class="profile-val">${escHtml(p.language && p.language.sentence_length || '-')}</div></div>
+        <div class="profile-kv"><div class="profile-key">常用修辞</div><div class="chip-group">${((p.language && p.language.rhetorical_devices) || []).map(k => '<span class="chip">' + escHtml(k) + '</span>').join('')}</div></div>
+        <div class="profile-kv"><div class="profile-key">标志性表达</div><div class="chip-group">${((p.language && p.language.signature_expressions) || []).map(k => '<span class="chip accent">' + escHtml(k) + '</span>').join('')}</div></div>
+      </div>
+      <div class="profile-card">
+        <div class="profile-card-title">内容偏好</div>
+        <div class="profile-kv"><div class="profile-key">常写主题</div><div class="chip-group">${((p.content && p.content.themes) || []).map(k => '<span class="chip accent">' + escHtml(k) + '</span>').join('')}</div></div>
+        <div class="profile-kv"><div class="profile-key">内容深度</div><div class="profile-val">${escHtml(p.content && p.content.depth || '-')}</div></div>
+        <div class="profile-kv"><div class="profile-key">数据使用</div><div class="profile-val">${escHtml(p.content && p.content.data_usage || '-')}</div></div>
+        <div class="profile-kv"><div class="profile-key">举例方式</div><div class="profile-val">${escHtml(p.content && p.content.example_style || '-')}</div></div>
+      </div>
+      <div class="profile-card" style="grid-column:1/-1">
+        <div class="profile-card-title">AI 写作指令（核心）</div>
+        <div class="instruction-box">${escHtml(p.writing_instructions || '尚未建立')}</div>
+      </div>
+      ${p.sample_sentences && p.sample_sentences.length ? `
+      <div class="profile-card" style="grid-column:1/-1">
+        <div class="profile-card-title">代表性句子</div>
+        <ul class="sentence-list">${p.sample_sentences.map(s => '<li>' + escHtml(s) + '</li>').join('')}</ul>
+      </div>` : ''}
+      ${p._meta ? `
+      <div class="profile-card">
+        <div class="profile-card-title">档案元信息</div>
+        <div class="profile-kv"><div class="profile-key">分析时间</div><div class="profile-val">${escHtml((p._meta.analyzed_at || '').substring(0, 10) || '-')}</div></div>
+        <div class="profile-kv"><div class="profile-key">累计样本</div><div class="profile-val">${p._meta.sample_count || 0} 篇</div></div>
+        <div class="profile-kv"><div class="profile-key">使用模型</div><div class="profile-val">${escHtml(p._meta.provider || '')} / ${escHtml(p._meta.model || '')}</div></div>
+      </div>` : ''}
+    </div>
+  `;
+
+  // 绑定字数统计
+  const ta = document.getElementById('samples-textarea-' + p._profileId);
+  const cnt = document.getElementById('samples-count-' + p._profileId);
+  if (ta && cnt) {
+    ta.addEventListener('input', () => {
+      cnt.textContent = ta.value.replace(/\s/g, '').length + ' 字';
+    });
+  }
+}
+
+function showImportSamplesPanel(profileId) {
+  const panel = document.getElementById('import-samples-panel-' + profileId);
+  if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+
+
+function loadSamplesFromFiles(event, profileId) {
+  const files = Array.from(event.target.files);
+  const ta = document.getElementById('samples-textarea-' + profileId);
+  if (!ta || !files.length) return;
+
+  Promise.all(files.map(f => f.text())).then(texts => {
+    ta.value = texts.join('\n\n---\n\n');
+    const cnt = document.getElementById('samples-count-' + profileId);
+    if (cnt) cnt.textContent = ta.value.replace(/\s/g, '').length + ' 字';
+    showToast('已加载 ' + files.length + ' 个文件');
+  });
+}
+
+async function analyzeSamples(profileId) {
+  const ta = document.getElementById('samples-textarea-' + profileId);
+  const text = ta ? ta.value.trim() : '';
+  if (!text || text.length < 100) { showToast('文章样本太少，请粘贴更多内容', 'error'); return; }
+
+  // 按 --- 分割多篇文章
+  const rawSamples = text.split(/\n[-—]{3,}\n/).map(s => s.trim()).filter(s => s.length > 50);
+  if (!rawSamples.length) { showToast('未识别到有效文章，请确保每篇之间用 "---" 分隔', 'error'); return; }
+
+  const samples = rawSamples.map((content, i) => {
+    const lines = content.split('\n');
+    const title = lines[0].replace(/^#\s*/, '').trim().substring(0, 50) || ('样本 ' + (i+1));
+    return { title, content };
+  });
+
+  const progressEl = document.getElementById('analyze-progress-' + profileId);
+  const msgEl      = document.getElementById('analyze-msg-' + profileId);
+  if (progressEl) progressEl.style.display = 'block';
+  if (msgEl) msgEl.textContent = '正在连接 AI 分析...';
+
+  try {
+    const resp = await fetch('/api/profiles/' + profileId + '/analyze', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ samples, merge: true }),
+    });
+    if (!resp.ok) throw new Error('服务器错误 ' + resp.status);
+    if (!resp.body) throw new Error('浏览器不支持流式读取');
+
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer    = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const msg = JSON.parse(line.slice(5).trim());
+        if (msg.type === 'progress') {
+          if (msgEl) msgEl.textContent = msg.msg;
+        }
+        if (msg.__done) {
+          if (msg.error) {
+            showToast('分析失败：' + msg.error, 'error');
+            if (msgEl) msgEl.textContent = '⚠️ ' + msg.error;
+          } else {
+            showToast('风格分析完成，档案已更新！', 'success');
+            profilesState.activeData = msg.profile;
+            // 更新列表中的样本数
+            const idx = profilesState.list.findIndex(p => p.id === profileId);
+            if (idx !== -1) profilesState.list[idx].sample_count = msg.profile._meta?.sample_count || 0;
+            renderProfilesTabs();
+            renderProfile(msg.profile);
+            // 同步更新仿写页面的自定义风格选项
+            loadCustomProfileOptions();
+          }
+        }
+      }
+    }
+  } catch (err) {
+    showToast('分析失败：' + err.message, 'error');
+    if (msgEl) msgEl.textContent = '⚠️ ' + err.message;
+  }
+}
+
+// 新建档案弹窗
+function showCreateProfileModal() {
+  const modal = document.getElementById('create-profile-modal');
+  if (modal) modal.classList.add('open');
+}
+
+function closeCreateProfileModal(e) {
+  const modal = document.getElementById('create-profile-modal');
+  if (e.target === modal) modal.classList.remove('open');
+}
+
+async function createProfile() {
+  const name = (document.getElementById('new-profile-name') || {}).value.trim();
+  const icon = (document.getElementById('new-profile-icon') || {}).value.trim() || '📝';
+  const desc = (document.getElementById('new-profile-desc') || {}).value.trim();
+  if (!name) { showToast('请填写档案名称', 'error'); return; }
+
+  try {
+    const data = await fetchJSON('/api/profiles', { method: 'POST', body: { name, icon, description: desc } });
+    showToast('「' + name + '」档案已创建');
+    document.getElementById('create-profile-modal').classList.remove('open');
+    ['new-profile-name','new-profile-icon','new-profile-desc'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = id === 'new-profile-icon' ? '📝' : '';
+    });
+    // 刷新列表
+    profilesState.activeId = data.id;
+    await loadProfile();
+  } catch (err) {
+    showToast('创建失败：' + err.message, 'error');
+  }
+}
+
+async function deleteProfile(id, name) {
+  if (!confirm('确认删除「' + name + '」档案？此操作不可撤销。')) return;
+  try {
+    await fetchJSON('/api/profiles/' + id, { method: 'DELETE' });
+    showToast('已删除「' + name + '」');
+    profilesState.activeId = 'yushtang';
+    await loadProfile();
+  } catch (err) {
+    showToast('删除失败：' + err.message, 'error');
+  }
+}
+
+
+
+// ════════════════════════════════════════════════════════
+// 历史文章
+// ════════════════════════════════════════════════════════
+async function loadHistory() {
+  const el = document.getElementById('history-list');
+  if (el) el.innerHTML = '<div class="loading-state">加载中...</div>';
+  try {
+    const data  = await fetchJSON('/api/status');
+    const files = data.output || [];
+    if (!files.length) {
+      if (el) el.innerHTML = '<div class="empty-state">暂无已生成文章</div>';
+      return;
+    }
+    if (el) {
+      el.innerHTML = files.map(f => `
+        <div class="article-item" onclick="openArticleFromHistory('${f.name}')">
+          <div class="article-item-icon">📄</div>
+          <div class="article-item-body">
+            <div class="article-item-title">${escHtml(f.title)}</div>
+            <div class="article-item-meta">${(f.mtime || '').substring(0, 16).replace('T', ' ')} · ${formatSize(f.size)}</div>
+          </div>
+          <div class="article-item-arrow">›</div>
+        </div>
+      `).join('');
+    }
+  } catch (err) {
+    if (el) el.innerHTML = '<div class="empty-state" style="color:#f87171">加载失败：' + escHtml(err.message) + '</div>';
+  }
+}
+
+async function openArticleFromHistory(filename) {
+  try {
+    const data = await fetchJSON('/api/output/' + encodeURIComponent(filename));
+    const raw  = data.content || '';
+    const titleMatch = raw.match(/^#\s+(.+)/m);
+    const title = titleMatch ? titleMatch[1].trim() : filename.replace(/\.[^.]+$/, '');
+
+    const modalTitle = document.getElementById('modal-title');
+    if (modalTitle) modalTitle.textContent = title;
+
+    const contentEl = document.getElementById('modal-content');
+    if (contentEl) {
+      let html = typeof marked !== 'undefined' ? marked.parse(raw) : raw.replace(/\n/g, '<br>');
+      html = formatSectionHeadings(html);
+      contentEl.innerHTML = html;
+    }
+
+    const modal = document.getElementById('article-modal');
+    if (modal) modal.classList.add('open');
+  } catch (err) {
+    showToast('打开失败：' + err.message, 'error');
+  }
+}
+
+function closeArticleModal() {
+  const modal = document.getElementById('article-modal');
+  if (modal) modal.classList.remove('open');
+}
+
+function closeModal(e) {
+  const modal = document.getElementById('article-modal');
+  if (e.target === modal) closeArticleModal();
+}
+
+// ════════════════════════════════════════════════════════
+// AI 状态检测
+// ════════════════════════════════════════════════════════
+async function checkAIStatus() {
+  const dot  = document.getElementById('ai-status-dot');
+  const text = document.getElementById('ai-status-text');
+  try {
+    const cfg = await fetchJSON('/api/config');
+    if (dot) dot.className = 'status-dot ok';
+    if (text) text.textContent = cfg.provider + ' · ' + cfg.model;
+  } catch (err) {
+    if (dot) dot.className = 'status-dot err';
+    if (text) text.textContent = '配置加载失败';
+  }
+}
+
+// ════════════════════════════════════════════════════════
+// 参考文章仿写模块
+// ════════════════════════════════════════════════════════
+const imitateState = {
+  articles:       [],
+  selectedIds:    [],
+  addAreaOpen:    true,
+  selectedProfile:'yushtang',
+  imitateMode:    'quick',
+  pendingFiles:   [],   // 待上传的文件对象
+};
+
+async function loadImitate() {
+  await loadRefArticles();
+  bindRefContentCounter();
+  loadCustomProfileOptions();
+}
+
+function bindRefContentCounter() {
+  const textarea = document.getElementById('ref-content');
+  const counter  = document.getElementById('ref-char-count');
+  if (!textarea || textarea._bound) return;
+  textarea._bound = true;
+  textarea.addEventListener('input', () => {
+    const len = textarea.value.replace(/\s/g, '').length;
+    if (counter) {
+      counter.textContent = len + ' 字';
+      counter.style.color = len < 50 ? '#f87171' : len > 5000 ? '#fb923c' : '#94a3b8';
+    }
+  });
+}
+
+// ── 导入方式 Tab 切换 ────────────────────────────────
+function switchImportTab(tab) {
+  document.querySelectorAll('.import-tab').forEach(el => {
+    el.classList.toggle('active', el.dataset.import === tab);
+  });
+  document.querySelectorAll('.import-panel').forEach(el => {
+    el.classList.remove('active');
+  });
+  const panel = document.getElementById('import-panel-' + tab);
+  if (panel) panel.classList.add('active');
+}
+
+// ── 旧接口兼容 ─────────────────────────────────────
+function toggleRefAddArea() {
+  switchImportTab('paste');
+  const area = document.getElementById('ref-add-area');
+  if (!area) return;
+  const isOpen = area.style.display !== 'none';
+  area.style.display = isOpen ? 'none' : 'block';
+}
+
+// ── 粘贴保存 ─────────────────────────────────────────
+async function saveRefArticle() {
+  const title   = document.getElementById('ref-title').value.trim();
+  const content = document.getElementById('ref-content').value.trim();
+  if (!title)              { showToast('请填写文章标题', 'error'); return; }
+  if (content.length < 50) { showToast('正文不足 50 字', 'error'); return; }
+
+  const btn = document.getElementById('btn-save-ref');
+  setLoading(btn, true, '保存中...');
+  try {
+    await fetchJSON('/api/ref-articles', { method: 'POST', body: { title, content } });
+    showToast('「' + title + '」保存成功');
+    document.getElementById('ref-title').value   = '';
+    document.getElementById('ref-content').value = '';
+    const counter = document.getElementById('ref-char-count');
+    if (counter) counter.textContent = '0 字';
+    const area = document.getElementById('ref-add-area');
+    if (area) area.style.display = 'none';
+    await loadRefArticles();
+  } catch (err) {
+    showToast('保存失败：' + err.message, 'error');
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+// ── 链接解析 ─────────────────────────────────────────
+async function parseRefUrl() {
+  const urlInput = document.getElementById('ref-url-input');
+  const url = urlInput ? urlInput.value.trim() : '';
+  if (!url) { showToast('请输入链接', 'error'); return; }
+  if (!url.startsWith('http')) { showToast('请输入有效的 http/https 链接', 'error'); return; }
+
+  const btn      = document.getElementById('btn-parse-url');
+  const statusEl = document.getElementById('url-parse-status');
+  setLoading(btn, true, '解析中...');
+  if (statusEl) { statusEl.style.display = 'flex'; statusEl.textContent = '正在解析链接，请稍候...'; statusEl.className = 'url-parse-status loading'; }
+
+  try {
+    const data = await fetchJSON('/api/parse-url', { method: 'POST', body: { url } });
+    const titleEl   = document.getElementById('url-parsed-title');
+    const contentEl = document.getElementById('url-parsed-content');
+    const countEl   = document.getElementById('url-char-count');
+    const previewEl = document.getElementById('url-preview-area');
+
+    if (titleEl)   titleEl.value   = data.title || '';
+    if (contentEl) contentEl.value = data.content || '';
+    if (countEl)   countEl.textContent = (data.wordCount || 0) + ' 字';
+    if (previewEl) previewEl.style.display = 'block';
+
+    if (statusEl) { statusEl.textContent = '✅ 解析成功，共 ' + (data.wordCount || 0) + ' 字'; statusEl.className = 'url-parse-status success'; }
+  } catch (err) {
+    if (statusEl) { statusEl.textContent = '❌ ' + err.message; statusEl.className = 'url-parse-status error'; }
+    showToast('解析失败：' + err.message, 'error');
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function saveUrlArticle() {
+  const title   = (document.getElementById('url-parsed-title')   || {}).value || '';
+  const content = (document.getElementById('url-parsed-content') || {}).value || '';
+  if (!title.trim())    { showToast('标题不能为空', 'error'); return; }
+  if (content.length < 50) { showToast('正文不足 50 字', 'error'); return; }
+
+  try {
+    await fetchJSON('/api/ref-articles', { method: 'POST', body: { title: title.trim(), content } });
+    showToast('保存成功');
+    clearUrlPreview();
+    await loadRefArticles();
+  } catch (err) {
+    showToast('保存失败：' + err.message, 'error');
+  }
+}
+
+function clearUrlPreview() {
+  const els = ['url-parsed-title','url-parsed-content','ref-url-input'];
+  els.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  const previewEl = document.getElementById('url-preview-area');
+  if (previewEl) previewEl.style.display = 'none';
+  const statusEl = document.getElementById('url-parse-status');
+  if (statusEl) statusEl.style.display = 'none';
+}
+
+// ── 文件上传 ─────────────────────────────────────────
+function handleFileUpload(event) {
+  const files = Array.from(event.target.files);
+  if (!files.length) return;
+
+  imitateState.pendingFiles = files;
+  const listEl    = document.getElementById('file-list');
+  const previewEl = document.getElementById('file-upload-preview');
+  if (listEl) {
+    listEl.innerHTML = files.map((f, i) => `
+      <div class="file-item">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+        <span class="file-name">${escHtml(f.name)}</span>
+        <span class="file-size">${formatSize(f.size)}</span>
+      </div>
+    `).join('');
+  }
+  if (previewEl) previewEl.style.display = 'block';
+
+  const dropZone = document.getElementById('file-drop-zone');
+  if (dropZone) dropZone.querySelector('.file-upload-text').textContent = `已选 ${files.length} 个文件`;
+}
+
+async function saveUploadedFiles() {
+  const files = imitateState.pendingFiles;
+  if (!files.length) { showToast('请先选择文件', 'error'); return; }
+
+  let saved = 0, failed = 0;
+  for (const f of files) {
+    try {
+      const text = await f.text();
+      const title = f.name.replace(/\.[^.]+$/, '');
+      await fetchJSON('/api/ref-articles', { method: 'POST', body: { title, content: text } });
+      saved++;
+    } catch(e) {
+      failed++;
+    }
+  }
+
+  showToast(`批量导入完成：${saved} 篇成功${failed ? ('，' + failed + ' 篇失败') : ''}`);
+  clearFileUpload();
+  await loadRefArticles();
+}
+
+function clearFileUpload() {
+  imitateState.pendingFiles = [];
+  const input   = document.getElementById('file-upload-input');
+  const preview = document.getElementById('file-upload-preview');
+  const dropZone = document.getElementById('file-drop-zone');
+  if (input)   input.value = '';
+  if (preview) preview.style.display = 'none';
+  if (dropZone) dropZone.querySelector('.file-upload-text').textContent = '点击选择或拖放 TXT 文件';
+}
+
+// ── 参考文章列表 ─────────────────────────────────────
+async function loadRefArticles() {
+  const el = document.getElementById('ref-article-list');
+  try {
+    const data = await fetchJSON('/api/ref-articles');
+    imitateState.articles = data.articles || [];
+    renderRefArticleList();
+  } catch (err) {
+    if (el) el.innerHTML = '<div class="empty-state" style="color:#f87171">加载失败：' + escHtml(err.message) + '</div>';
+  }
+}
+
+function renderRefArticleList() {
+  const el   = document.getElementById('ref-article-list');
+  const list = imitateState.articles;
+  if (!el) return;
+  if (!list.length) {
+    el.innerHTML = '<div class="empty-state">暂无参考文章<br><span style="font-size:0.85rem;opacity:.6">点击上方「添加文章」，将参考文章粘贴进来</span></div>';
+    updateRefSelectedBadge();
+    return;
+  }
+  el.innerHTML = list.map(a => {
+    const checked = imitateState.selectedIds.includes(a.id);
+    return `
+      <div class="ref-article-item ${checked ? 'selected' : ''}" id="ref-item-${a.id}" onclick="toggleRefSelect('${a.id}')">
+        <input type="checkbox" class="ref-checkbox" ${checked ? 'checked' : ''} onclick="event.stopPropagation(); toggleRefSelect('${a.id}')" />
+        <div class="ref-article-body">
+          <div class="ref-article-title">${escHtml(a.title)}</div>
+          <div class="ref-article-meta">${a.wordCount || 0} 字 · ${(a.createdAt || '').substring(0, 10)}</div>
+          <div class="ref-article-preview">${escHtml(a.preview || '')}</div>
+        </div>
+        <button class="btn-icon-del" onclick="deleteRefArticle(event, '${a.id}')">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+        </button>
+      </div>
+    `;
+  }).join('');
+  updateRefSelectedBadge();
+}
+
+function toggleRefSelect(id) {
+  const idx = imitateState.selectedIds.indexOf(id);
+  if (idx === -1) {
+    if (imitateState.selectedIds.length >= 5) { showToast('最多勾选 5 篇参考文章', 'error'); return; }
+    imitateState.selectedIds.push(id);
+  } else {
+    imitateState.selectedIds.splice(idx, 1);
+  }
+  renderRefArticleList();
+}
+
+function updateRefSelectedBadge() {
+  const badge = document.getElementById('ref-selected-badge');
+  const n = imitateState.selectedIds.length;
+  if (badge) badge.textContent = n ? '已选 ' + n + ' 篇' : '';
+}
+
+async function deleteRefArticle(e, id) {
+  e.stopPropagation();
+  try {
+    await fetchJSON('/api/ref-articles/' + id, { method: 'DELETE' });
+    imitateState.selectedIds = imitateState.selectedIds.filter(i => i !== id);
+    await loadRefArticles();
+    showToast('已删除');
+  } catch (err) {
+    showToast('删除失败：' + err.message, 'error');
+  }
+}
+
+// ── 风格选择 ─────────────────────────────────────────
+function selectImitateProfile(profileId) {
+  imitateState.selectedProfile = profileId;
+  document.querySelectorAll('#imitate-style-selector .style-option').forEach(el => {
+    el.classList.toggle('active', el.dataset.profile === profileId);
+  });
+}
+
+async function loadCustomProfileOptions() {
+  const container = document.getElementById('custom-profile-options');
+  if (!container) return;
+  try {
+    const data = await fetchJSON('/api/profiles');
+    const customs = (data.profiles || []).filter(p =>
+      p.id !== 'yushtang' && p.id !== 'zaiwang'
+    );
+    container.innerHTML = customs.map(p => `
+      <div class="style-option" data-profile="${escHtml(p.id)}" onclick="selectImitateProfile('${escHtml(p.id)}')">
+        <span class="style-icon">${escHtml(p.icon || '📝')}</span>
+        <div class="style-info-text">
+          <div class="style-name">${escHtml(p.name)}</div>
+          <div class="style-desc">${p.sample_count ? p.sample_count + ' 篇样本' : '未分析'}</div>
+        </div>
+      </div>
+    `).join('');
+  } catch(e) {}
+}
+
+// ── 仿写深度选择 ─────────────────────────────────────
+function selectImitateMode(mode) {
+  imitateState.imitateMode = mode;
+  const quickEl = document.getElementById('imitate-mode-quick');
+  const deepEl  = document.getElementById('imitate-mode-deep');
+  if (quickEl) quickEl.classList.toggle('active', mode === 'quick');
+  if (deepEl)  deepEl.classList.toggle('active',  mode === 'deep');
+}
+
+// ── 开始仿写 ─────────────────────────────────────────
+async function startImitate() {
+  const topic = (document.getElementById('imitate-topic') || {}).value.trim();
+  const note  = (document.getElementById('imitate-note')  || {}).value.trim();
+  if (!topic)                          { showToast('请填写想写的主题', 'error'); return; }
+  if (!imitateState.selectedIds.length){ showToast('请至少勾选 1 篇参考文章', 'error'); return; }
+
+  const useTavily    = document.getElementById('imitate-tavily-enabled') ? document.getElementById('imitate-tavily-enabled').checked : false;
+  const imitateMode  = imitateState.imitateMode || 'quick';
+  const profileId    = imitateState.selectedProfile || 'yushtang';
+
+  const btn       = document.getElementById('btn-imitate');
+  const progArea  = document.getElementById('imitate-progress-area');
+  const progMsg   = document.getElementById('imitate-progress-msg');
+  const resultEl  = document.getElementById('imitate-result');
+  const configPan = document.getElementById('imitate-config-panel');
+
+  setLoading(btn, true, 'AI 仿写中...');
+  if (progArea)  progArea.style.display = 'block';
+  if (resultEl)  resultEl.style.display = 'none';
+  [1,2,3,4].forEach(n => setImiStep(n, ''));
+  setImiStep(1, 'active');
+
+  try {
+    const resp = await fetch('/api/imitate', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        refIds: imitateState.selectedIds,
+        topic, extraNote: note,
+        imitateMode, useTavily, profileId,
+      }),
+    });
+    if (!resp.ok) throw new Error('服务器错误 ' + resp.status);
+    if (!resp.body) throw new Error('浏览器不支持流式读取');
+
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let   buffer  = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const msg = JSON.parse(line.slice(5).trim());
+        if (msg.type === 'progress') {
+          if (progMsg) progMsg.textContent = msg.msg;
+          if (msg.step === 1) setImiStep(1, 'active');
+          if (msg.step === 2) { setImiStep(1, 'done'); setImiStep(2, 'active'); }
+          if (msg.step === 3) { setImiStep(2, 'done'); setImiStep(3, 'active'); }
+          if (msg.step === 4) { setImiStep(3, 'done'); setImiStep(4, 'active'); }
+        }
+        if (msg.__done) {
+          if (msg.error) {
+            showToast('仿写失败：' + msg.error, 'error');
+            if (progMsg) progMsg.textContent = '⚠️ ' + msg.error;
+          } else {
+            setImiStep(4, 'done');
+            renderImitateResult(msg);
+            if (progMsg) progMsg.textContent = '✓ 仿写完成！';
+            loadStatus();
+          }
+        }
+      }
+    }
+  } catch (err) {
+    showToast('仿写失败：' + err.message, 'error');
+    if (progMsg) progMsg.textContent = '⚠️ ' + err.message;
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+function setImiStep(num, st) {
+  const el = document.getElementById('istep-' + num);
+  if (!el) return;
+  el.className = 'write-step' + (st ? ' ' + st : '');
+  const icon = el.querySelector('.wstep-icon');
+  if (!icon) return;
+  icon.textContent = st === 'active' ? '⚙️' : st === 'done' ? '✅' : '⏳';
+}
+
+function renderImitateResult(data) {
+  const titleEl = document.getElementById('imitate-result-title');
+  if (titleEl) titleEl.textContent = data.title || '仿写结果';
+  const resultEl = document.getElementById('imitate-result');
+  if (resultEl) resultEl.style.display = 'block';
+
+  const wcEl = document.getElementById('imitate-wordcount');
+  if (wcEl) wcEl.textContent = '约 ' + (data.wordCount || 0) + ' 字';
+
+  const tagsEl = document.getElementById('imitate-tags');
+  if (tagsEl) tagsEl.innerHTML = (data.tags || []).map(t => '<span class="tag-chip">' + escHtml(t) + '</span>').join('');
+
+  const profileUsedEl = document.getElementById('imitate-profile-used');
+  if (profileUsedEl) profileUsedEl.textContent = data.profileName ? '风格：' + data.profileName : '';
+
+  const refEl = document.getElementById('imitate-ref-source');
+  if (refEl) {
+    if (data.refTitles && data.refTitles.length) {
+      refEl.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg> 参考自：' +
+        data.refTitles.map(t => '<span class="ref-badge">' + escHtml(t) + '</span>').join('');
+      refEl.style.display = 'flex';
+    } else {
+      refEl.style.display = 'none';
+    }
+  }
+
+  const summaryEl = document.getElementById('imitate-summary');
+  if (summaryEl) {
+    summaryEl.style.display = data.summary ? 'block' : 'none';
+    if (data.summary) summaryEl.textContent = data.summary;
+  }
+
+  const contentEl = document.getElementById('imitate-content');
+  if (contentEl) {
+    let html = typeof marked !== 'undefined' ? marked.parse(data.content || '') : (data.content || '').replace(/\n/g, '<br>');
+    html = formatSectionHeadings(html);
+    contentEl.innerHTML = html;
+  }
+
+  if (resultEl) resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function copyImitateResult() {
+  const content = document.getElementById('imitate-content').innerText;
+  navigator.clipboard.writeText(content)
+    .then(() => showToast('正文已复制到剪贴板'))
+    .catch(() => showToast('复制失败，请手动选择复制', 'error'));
+}
+
+function resetImitate() {
+  const ri = document.getElementById('imitate-result');
+  const pa = document.getElementById('imitate-progress-area');
+  const pm = document.getElementById('imitate-progress-msg');
+  if (ri) ri.style.display = 'none';
+  if (pa) pa.style.display = 'none';
+  [1, 2, 3, 4].forEach(n => setImiStep(n, ''));
+  if (pm) pm.textContent = '';
+  const it = document.getElementById('imitate-topic');
+  if (it) it.focus();
+}
+
+
+
+
+
+
+// ════════════════════════════════════════════════════════
+// 全网热点模块
+// ════════════════════════════════════════════════════════
+let globalHotTimeRange = 'realtime'; // 'realtime' | '24h' | '7d'
+
+function switchHotTab(tab) {
+  const localContent  = document.getElementById('hot-content-local');
+  const globalContent = document.getElementById('hot-content-global');
+  const localTab      = document.getElementById('hot-tab-local');
+  const globalTab     = document.getElementById('hot-tab-global');
+  if (tab === 'local') {
+    if (localContent) localContent.style.display = 'block';
+    if (globalContent) globalContent.style.display = 'none';
+    if (localTab) localTab.classList.add('active');
+    if (globalTab) globalTab.classList.remove('active');
+  } else {
+    if (localContent) localContent.style.display = 'none';
+    if (globalContent) globalContent.style.display = 'block';
+    if (localTab) localTab.classList.remove('active');
+    if (globalTab) globalTab.classList.add('active');
+  }
+}
+
+function switchTimeRange(range) {
+  globalHotTimeRange = range;
+  ['realtime', '24h', '7d'].forEach(r => {
+    const btn = document.getElementById('trt-' + r);
+    if (btn) btn.classList.toggle('active', r === range);
+  });
+}
+
+async function loadGlobalHot() {
+  const query      = document.getElementById('global-hot-query').value.trim();
+  const btn        = document.getElementById('btn-global-search');
+  const listEl     = document.getElementById('global-hot-list');
+  const progressEl = document.getElementById('global-hot-progress');
+  const msgEl      = document.getElementById('global-hot-msg');
+  const sourceBar  = document.getElementById('global-source-bar');
+
+  const timeRangeLabel = globalHotTimeRange === 'realtime' ? '实时' : globalHotTimeRange === '24h' ? '24小时内' : '7天内';
+  setLoading(btn, true, '搜索中...');
+  if (progressEl) progressEl.style.display = 'block';
+  if (msgEl) msgEl.textContent = query ? `正在搜索「${query}」(${timeRangeLabel})...` : `正在获取${timeRangeLabel}全网热点...`;
+  if (listEl) listEl.innerHTML = '';
+  if (sourceBar) {
+    sourceBar.style.display = 'flex';
+    const dot = document.getElementById('global-src-dot');
+    const cnt = document.getElementById('global-src-count');
+    if (dot) dot.className = 'source-dot ok';
+    if (cnt) cnt.textContent = '搜索中...';
+  }
+
+  try {
+    const data     = await fetchJSON('/api/global-hot', { method: 'POST', body: { query, timeRange: globalHotTimeRange } });
+    const articles = data.articles || [];
+    if (progressEl) progressEl.style.display = 'none';
+    if (!articles.length) {
+      if (listEl) listEl.innerHTML = '<div class="empty-state">未找到相关内容</div>';
+      if (msgEl) msgEl.textContent = '⚠️ 未找到相关内容';
+      return;
+    }
+    if (listEl) {
+      listEl.innerHTML = articles.map((a, i) => {
+        const rankClass = i < 5 ? ' rank-' + (i+1) : '';
+        const urlHtml = a.url ? '<div class="topic-angle"><a href="' + escHtml(a.url) + '" target="_blank" style="color:var(--accent);font-size:12px">查看原文 ↗</a></div>' : '';
+        return `
+        <div class="topic-card${a.type === 'search' ? ' topic-card-search' : ''}" style="cursor:pointer" onclick="selectGlobalHotTopic('${escHtml(a.title)}')">
+          <div class="topic-num${rankClass}">${i + 1}</div>
+          <div class="topic-body">
+            <div class="topic-title">${escHtml(a.title)}</div>
+            ${urlHtml}
+            <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
+              <span class="topic-source">${escHtml(a.source || 'Tavily')}</span>
+            </div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();selectGlobalHotTopic('${escHtml(a.title)}')">用此话题写文章</button>
+        </div>`;
+      }).join('');
+    }
+    const cntEl = document.getElementById('global-src-count');
+    if (cntEl) cntEl.textContent = articles.length + ' 条';
+    if (msgEl) msgEl.textContent = `✓ 找到 ${articles.length} 条结果（${timeRangeLabel}）`;
+  } catch (err) {
+    if (progressEl) progressEl.style.display = 'none';
+    if (listEl) listEl.innerHTML = '<div class="empty-state" style="color:var(--danger)">搜索失败：' + escHtml(err.message) + '</div>';
+    if (msgEl) msgEl.textContent = '⚠️ 搜索失败：' + err.message;
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+function selectGlobalHotTopic(title) {
+  const kw = document.getElementById('kw-input');
+  if (kw) kw.value = title;
+  navigate('write');
+  showToast('已跳转到生成文章，点击「搜索新闻」继续');
+}
+
+// ════════════════════════════════════════════════════════
+// 自定义消息源管理
+// ════════════════════════════════════════════════════════
+const CUSTOM_SOURCES_KEY = 'wx_writer_custom_sources';
+
+function loadCustomSources() {
+  try {
+    return JSON.parse(localStorage.getItem(CUSTOM_SOURCES_KEY) || '[]');
+  } catch(e) { return []; }
+}
+
+function saveCustomSources(sources) {
+  localStorage.setItem(CUSTOM_SOURCES_KEY, JSON.stringify(sources));
+}
+
+function renderCustomSourceChips() {
+  const sources = loadCustomSources();
+  const container = document.getElementById('custom-source-chips');
+  if (!container) return;
+  container.innerHTML = sources.map((s, i) => `
+    <div class="source-chip" id="src-chip-custom-${i}">
+      <span class="source-chip-dot" id="src-dot-custom-${i}"></span>
+      <span class="source-chip-name" title="${escHtml(s.url)}">${escHtml(s.name.length > 8 ? s.name.substring(0, 8) + '…' : s.name)}</span>
+      <button class="source-chip-del" onclick="deleteCustomSource(${i})" title="删除此消息源">✕</button>
+    </div>
+  `).join('');
+}
+
+function showAddSourceModal() {
+  const modal = document.getElementById('add-source-modal');
+  if (modal) {
+    modal.classList.add('open');
+    const nameEl = document.getElementById('new-source-name');
+    const urlEl  = document.getElementById('new-source-url');
+    const selEl  = document.getElementById('new-source-selector');
+    if (nameEl) nameEl.value = '';
+    if (urlEl)  urlEl.value  = '';
+    if (selEl)  selEl.value  = '';
+  }
+}
+
+function closeAddSourceModal(event) {
+  if (event.target === event.currentTarget) {
+    event.currentTarget.classList.remove('open');
+  }
+}
+
+function addCustomSource() {
+  const name = (document.getElementById('new-source-name')?.value || '').trim();
+  const url  = (document.getElementById('new-source-url')?.value  || '').trim();
+  const sel  = (document.getElementById('new-source-selector')?.value || '').trim();
+  if (!name) { showToast('请输入消息源名称', 'error'); return; }
+  if (!url)  { showToast('请输入网站地址', 'error'); return; }
+  if (!url.startsWith('http')) { showToast('网站地址需以 http:// 或 https:// 开头', 'error'); return; }
+
+  const sources = loadCustomSources();
+  if (sources.some(s => s.url === url)) { showToast('该消息源已存在', 'error'); return; }
+  sources.push({ name, url, selector: sel });
+  saveCustomSources(sources);
+  renderCustomSourceChips();
+  document.getElementById('add-source-modal').classList.remove('open');
+  showToast(`已添加消息源「${name}」，下次刷新热点时生效`);
+}
+
+function deleteCustomSource(index) {
+  const sources = loadCustomSources();
+  const removed = sources.splice(index, 1);
+  saveCustomSources(sources);
+  renderCustomSourceChips();
+  if (removed.length) showToast(`已删除消息源「${removed[0].name}」`);
+}
+
+// ════════════════════════════════════════════════════════
+// 微信排版预览
+// ════════════════════════════════════════════════════════
+function updateWxPreview(title, markdownContent) {
+  const titleEl       = document.getElementById('wx-preview-title');
+  const bodyEl        = document.getElementById('wx-preview-body');
+  const headerEl      = document.getElementById('wx-side-header');
+  const emptyEl       = document.getElementById('wx-empty-placeholder');
+  const actionsEl     = document.getElementById('wx-side-actions');
+
+  if (titleEl) titleEl.textContent = title || '未命名文章';
+
+  // 渲染 markdown 为微信风格 HTML
+  if (bodyEl && markdownContent) {
+    const html = typeof marked !== 'undefined'
+      ? marked.parse(markdownContent)
+      : markdownContent.replace(/\n/g, '<br>');
+    // 先清空，移除占位，再写入正文
+    if (emptyEl) emptyEl.style.display = 'none';
+    bodyEl.innerHTML = html;
+  }
+
+  // 显示文章头部
+  if (headerEl) headerEl.style.display = 'block';
+  // 显示推送按钮
+  if (actionsEl) actionsEl.style.display = 'block';
+
+  // 设置发布时间
+  const timeEl = document.getElementById('wx-preview-time');
+  if (timeEl) {
+    const now = new Date();
+    timeEl.textContent = `${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日`;
+  }
+}
+
+async function sendToWechat() {
+  const btn = document.getElementById('btn-send-wx');
+  const statusEl = document.getElementById('result-wx-status');
+  setLoading(btn, true, '推送中...');
+  try {
+    const titleEl = document.getElementById('result-title-header');
+    const contentEl = document.getElementById('result-content');
+    const title = titleEl ? titleEl.textContent.replace('文章已生成', '').trim() || '无标题' : '无标题';
+    const content = contentEl ? contentEl.innerText : '';
+    const data = await fetchJSON('/api/push-draft', { method: 'POST', body: { title, content } });
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--success)">✓ 已推送微信草稿箱</span>';
+    showToast('推送成功！请在微信公众号后台草稿箱查看');
+  } catch(err) {
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--danger)">⚠️ 推送失败：${escHtml(err.message)}</span>`;
+    showToast('推送失败：' + err.message, 'error');
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+// ════════════════════════════════════════════════════════
+// 工具函数
+// ════════════════════════════════════════════════════════
+async function fetchJSON(url, options) {
+  options = options || {};
+  const opts = {
+    method:  options.method || 'GET',
+    headers: { 'Content-Type': 'application/json' },
+  };
+  if (options.body) opts.body = JSON.stringify(options.body);
+  const res = await fetch(url, opts);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+  return res.json();
+}
+
+function escHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024)       return bytes + 'B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'KB';
+  return (bytes / 1024 / 1024).toFixed(1) + 'MB';
+}
+
+function setLoading(btn, loading, label) {
+  if (!btn) return;
+  btn.disabled = loading;
+  if (loading) {
+    btn._origHTML = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner"></span> ' + (label || '处理中...');
+  } else {
+    btn.innerHTML = btn._origHTML || btn.innerHTML;
+  }
+}
+
+// ── Toast ──────────────────────────────────────────────
+let _toastContainer;
+
+function initToast() {
+  _toastContainer = document.createElement('div');
+  _toastContainer.id = 'toast';
+  document.body.appendChild(_toastContainer);
+}
+
+function showToast(message, type) {
+  type = type || 'success';
+  const item = document.createElement('div');
+  item.className = 'toast-item ' + type;
+  item.textContent = (type === 'success' ? '✓ ' : '⚠️ ') + message;
+  if (_toastContainer) _toastContainer.appendChild(item);
+  setTimeout(() => {
+    item.style.opacity = '0';
+    item.style.transform = 'translateY(8px)';
+    item.style.transition = 'all 0.3s';
+    setTimeout(() => item.remove(), 300);
+  }, 3500);
+}
