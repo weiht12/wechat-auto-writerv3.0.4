@@ -1517,7 +1517,15 @@ function renderProfile(p) {
 }
 
 function showImportSamplesPanel(profileId) {
-  const panel = document.getElementById('import-samples-panel-' + profileId);
+  let panel = document.getElementById('import-samples-panel-' + profileId);
+  // 空状态下面板不存在，先构建完整的 profile 区域（含导入面板）
+  if (!panel) {
+    const el = document.getElementById('profile-content');
+    if (el) {
+      renderProfile({ _profileId: profileId, _profileName: profileId, summary: null });
+      panel = document.getElementById('import-samples-panel-' + profileId);
+    }
+  }
   if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
 }
 
