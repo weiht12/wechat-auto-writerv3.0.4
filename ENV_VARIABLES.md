@@ -18,7 +18,7 @@
 | 变量名 | 说明 | 示例值 |
 |--------|------|--------|
 | `DEEPSEEK_API_KEY` | DeepSeek API 密钥 | `sk-xxxxx` |
-| `WEIXIN_APP_ID` | 微信公众号 AppID | `wx1234567890abcdef` |
+| `WEIXIN_APP_ID` | 微信公众号 AppID | `your_weixin_app_id` |
 | `WEIXIN_APP_SECRET` | 微信公众号 AppSecret | `xxxxxxxxxxxxxxxxxxxxxxxx` |
 
 ---
@@ -86,8 +86,8 @@ TAVILY_API_KEY=tvly-dev-xxxxx
 
 ```bash
 WEIXIN_ENABLED=true
-WEIXIN_APP_ID=wx1234567890abcdef
-WEIXIN_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
+WEIXIN_APP_ID=your_weixin_app_id
+WEIXIN_APP_SECRET=your_weixin_app_secret
 WEIXIN_AUTHOR=公众号
 WEIXIN_DEFAULT_THUMB_MEDIA_ID=
 WEIXIN_OPEN_COMMENT=true
@@ -205,8 +205,8 @@ npm install dotenv
 在项目根目录创建 `.env` 文件:
 ```bash
 DEEPSEEK_API_KEY=sk-xxxxx
-WEIXIN_APP_ID=wx1234567890abcdef
-WEIXIN_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
+WEIXIN_APP_ID=your_weixin_app_id
+WEIXIN_APP_SECRET=your_weixin_app_secret
 ```
 
 修改 `server.js` 顶部添加:
@@ -224,8 +224,8 @@ DEEPSEEK_API_KEY=sk-xxxxx WEIXIN_APP_ID=wx123456 WEIXIN_APP_SECRET=xxxxx npm sta
 
 ```powershell
 $env:DEEPSEEK_API_KEY="sk-xxxxx"
-$env:WEIXIN_APP_ID="wx1234567890abcdef"
-$env:WEIXIN_APP_SECRET="xxxxxxxxxxxxxxxxxxxxxxxx"
+$env:WEIXIN_APP_ID="your_weixin_app_id"
+$env:WEIXIN_APP_SECRET="your_weixin_app_secret"
 npm start
 ```
 
